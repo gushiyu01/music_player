@@ -1,0 +1,131 @@
+name: Build personal music player
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_REVISION: 737ba8f885dc774b53b442759999a312c9461e4e # Flutter 3.47.8
+
+jobs:
+  quality:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned Flutter SDK
+        run: |
+          git init "$RUNNER_TEMP/flutter"
+          git -C "$RUNNER_TEMP/flutter" remote add origin https://github.com/flutter/flutter.git
+          git -C "$RUNNER_TEMP/flutter" fetch --depth 1 origin "$FLUTTER_REVISION"
+          git -C "$RUNNER_TEMP/flutter" checkout FETCH_HEAD
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
+      - run: flutter pub get --enforce-lockfile
+      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: flutter analyze
+      - run: flutter test --coverage
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-coverage
+          path: coverage/lcov.info
+
+  android:
+    name: Android APK and device smoke test
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned Flutter SDK
+        run: |
+          git init "$RUNNER_TEMP/flutter"
+          git -C "$RUNNER_TEMP/flutter" remote add origin https://github.com/flutter/flutter.git
+          git -C "$RUNNER_TEMP/flutter" fetch --depth 1 origin "$FLUTTER_REVISION"
+          git -C "$RUNNER_TEMP/flutter" checkout FETCH_HEAD
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
+      - run: flutter pub get --enforce-lockfile
+      - name: Restore personal signing key
+        if: github.event_name != 'pull_request'
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            printf '%s' "$KEYSTORE" | base64 --decode > android/app/personal-release.jks
+            printf 'storeFile=personal-release.jks\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=personal\n' "$STORE_PASSWORD" "$STORE_PASSWORD" > android/key.properties
+          fi
+      - name: Build APK
+        run: flutter build apk --release --build-number=${{ github.run_number }}
+      - name: Package APK with checksum
+        run: |
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/cloud-music-android.apk
+          cd artifacts
+          sha256sum cloud-music-android.apk > SHA256SUMS.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cloud-music-android
+          path: artifacts/
+          retention-days: 30
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install, launch and verify background playback
+        uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: python3 tools/android_smoke.py
+      - name: Upload device evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-device-evidence
+          path: artifacts/device/
+          if-no-files-found: ignore
+
+  ios:
+    name: iOS unsigned compile
+    needs: quality
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned Flutter SDK
+        run: |
+          git init "$RUNNER_TEMP/flutter"
+          git -C "$RUNNER_TEMP/flutter" remote add origin https://github.com/flutter/flutter.git
+          git -C "$RUNNER_TEMP/flutter" fetch --depth 1 origin "$FLUTTER_REVISION"
+          git -C "$RUNNER_TEMP/flutter" checkout FETCH_HEAD
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter build ios --release --no-codesign --build-number=${{ github.run_number }}
+      - name: Archive unsigned app
+        run: ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app cloud-music-ios-unsigned.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cloud-music-ios-unsigned
+          path: cloud-music-ios-unsigned.zip
+          retention-days: 14

@@ -1,0 +1,27 @@
+# Flutter and local tooling
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+coverage/
+.idea/
+*.iml
+.DS_Store
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+key.properties
+local.properties
+*.log
+artifacts/
+android/.gradle/
+android/captures/
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Runner/GeneratedPluginRegistrant.*
