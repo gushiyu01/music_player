@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -22,41 +23,61 @@ def ui():
     (evidence / 'latest-ui.xml').write_text(value, encoding='utf-8')
     return ET.fromstring(value)
 
-def tap_label(label):
-    document = ui()
-    for node in document.iter('node'):
-        text = node.attrib.get('text', '') + ' ' + node.attrib.get('content-desc', '')
-        if label in text:
-            points = [int(v) for v in re.findall(r'\d+', node.attrib['bounds'])]
-            adb('shell', 'input', 'tap', str((points[0] + points[2]) // 2), str((points[1] + points[3]) // 2))
-            return
+def tap_node(node):
+    points = [int(v) for v in re.findall(r'\d+', node.attrib['bounds'])]
+    adb('shell', 'input', 'tap', str((points[0] + points[2]) // 2), str((points[1] + points[3]) // 2))
+
+def find_label(label, timeout=25):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        document = ui()
+        titles = [n.attrib.get('text', '') for n in document.iter('node')
+                  if n.attrib.get('resource-id') == 'android:id/alertTitle']
+        # A cold emulator's launcher can ANR while installing. Handle that
+        # external dialog explicitly; an ANR from our app still fails the test.
+        if any('Quickstep' in title or 'Launcher3' in title for title in titles):
+            for node in document.iter('node'):
+                if node.attrib.get('resource-id') == 'android:id/aerr_close':
+                    tap_node(node)
+                    break
+            time.sleep(2)
+            continue
+        for node in document.iter('node'):
+            text = node.attrib.get('text', '') + ' ' + node.attrib.get('content-desc', '')
+            if label in text:
+                return node
+        time.sleep(1)
     raise AssertionError(f'Cannot find accessible UI label: {label}')
 
+def tap_label(label):
+    tap_node(find_label(label))
+
+def media_state(expected, name):
+    sessions = adb('shell', 'dumpsys', 'media_session')
+    (evidence / f'{name}-media-session.txt').write_text(sessions, encoding='utf-8')
+    assert package in sessions, 'App did not create a system media session'
+    assert re.search(rf'state=(?:[A-Z_]+\()?{expected}\b', sessions), f'Unexpected media state: expected {expected}'
+
 try:
-    adb('install', '-r', str(root / 'build/app/outputs/flutter-apk/app-release.apk'))
+    apk = Path(sys.argv[1]) if len(sys.argv) > 1 else root / 'build/app/outputs/flutter-apk/app-release.apk'
+    adb('install', '-r', str(apk))
     adb('shell', 'monkey', '-p', package, '-c', 'android.intent.category.LAUNCHER', '1')
     time.sleep(8)
+    dawn = find_label('晨光')
     screenshot('01-library')
-    tap_label('晨光')
+    tap_node(dawn)
     time.sleep(5)
-    sessions = adb('shell', 'dumpsys', 'media_session')
-    (evidence / 'foreground-media-session.txt').write_text(sessions, encoding='utf-8')
-    assert package in sessions, 'App did not create a system media session'
-    assert re.search(r'state=3\b', sessions), 'Demo did not enter playing state'
+    media_state(3, 'foreground')
     screenshot('02-playing')
     adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
     time.sleep(4)
-    sessions = adb('shell', 'dumpsys', 'media_session')
-    (evidence / 'background-media-session.txt').write_text(sessions, encoding='utf-8')
-    assert re.search(r'state=3\b', sessions), 'Playback stopped after leaving the app'
+    media_state(3, 'background')
     adb('shell', 'input', 'keyevent', 'KEYCODE_MEDIA_PAUSE')
     time.sleep(2)
-    sessions = adb('shell', 'dumpsys', 'media_session')
-    assert re.search(r'state=2\b', sessions), 'System pause did not pause the player'
+    media_state(2, 'system-pause')
     adb('shell', 'input', 'keyevent', 'KEYCODE_MEDIA_PLAY')
     time.sleep(2)
-    sessions = adb('shell', 'dumpsys', 'media_session')
-    assert re.search(r'state=3\b', sessions), 'System play did not resume the player'
+    media_state(3, 'system-resume')
     adb('shell', 'monkey', '-p', package, '-c', 'android.intent.category.LAUNCHER', '1')
     time.sleep(2)
     tap_label('云间 · 原创合成试听')
