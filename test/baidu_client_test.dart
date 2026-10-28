@@ -25,6 +25,18 @@ class MemoryStore implements SessionStore {
   }
 }
 
+class DelayedStore extends MemoryStore {
+  final writing = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> write(DriveSession session) async {
+    writing.complete();
+    await release.future;
+    await super.write(session);
+  }
+}
+
 DriveSession credentials({int? expiresAt}) => DriveSession(
   appKey: 'test-key',
   secretKey: 'test-secret',
@@ -41,6 +53,60 @@ http.Response jsonResponse(Map<String, dynamic> value, [int status = 200]) =>
 const track = DriveEntry(id: '123', name: '歌曲.flac', path: '/音乐/歌曲.flac');
 
 void main() {
+  test('disconnect wins even when secure storage is still writing', () async {
+    final store = DelayedStore();
+    final client = BaiduClient(store);
+    await client.initialize();
+    final saving = client.replaceSession(credentials());
+    await store.writing.future;
+    final disconnecting = client.disconnect();
+    store.release.complete();
+    await Future.wait([saving, disconnecting]);
+    expect(client.session.connected, isFalse);
+    expect(store.value.connected, isFalse);
+    client.client.close();
+  });
+
+  test(
+    'cancelled device authorization cannot replace the current account',
+    () async {
+      final response = Completer<http.Response>();
+      final requested = Completer<void>();
+      final store = MemoryStore(credentials());
+      final client = BaiduClient(
+        store,
+        client: MockClient((_) {
+          requested.complete();
+          return response.future;
+        }),
+      );
+      await client.initialize();
+      final completion = client.completeDevice(
+        DeviceGrant(
+          'device',
+          'code',
+          Uri.parse('https://openapi.baidu.com/device'),
+          300,
+          5,
+        ),
+        'another-key',
+        'another-secret',
+      );
+      final checked = expectLater(
+        completion,
+        throwsA(
+          isA<DriveException>().having((e) => e.code, 'code', 'cancelled'),
+        ),
+      );
+      await requested.future;
+      client.cancelPendingAuthorization();
+      response.complete(jsonResponse({'access_token': 'cancelled-access'}));
+      await checked;
+      expect(client.session.accessToken, 'old-access');
+      expect(store.value.accessToken, 'old-access');
+    },
+  );
+
   test(
     'temporary OAuth failures preserve existing tokens and report service error',
     () async {

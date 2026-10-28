@@ -25,7 +25,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   DateTime? _deadline;
   int _interval = 5;
   bool _busy = false;
-  bool _polling = false;
+  int _attempt = 0;
+  int? _checkingAttempt;
   bool _hideSecret = true;
   String? _message;
 
@@ -38,12 +39,19 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
 
   @override
   void dispose() {
-    _poll?.cancel();
-    widget.controller.client.cancelPendingAuthorization();
+    _cancelAuthorization();
     _key.dispose();
     _secret.dispose();
     _token.dispose();
     super.dispose();
+  }
+
+  void _cancelAuthorization() {
+    _attempt++;
+    _poll?.cancel();
+    _grant = null;
+    _deadline = null;
+    widget.controller.client.cancelPendingAuthorization();
   }
 
   void _notice(String message) {
@@ -61,6 +69,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       return;
     }
     FocusScope.of(context).unfocus();
+    _cancelAuthorization();
+    final attempt = _attempt;
     setState(() {
       _busy = true;
       _message = null;
@@ -69,7 +79,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       final grant = await widget.controller.client.requestDevice(
         _key.text.trim(),
       );
-      if (!mounted) return;
+      if (!mounted || attempt != _attempt) return;
       setState(() {
         _grant = grant;
         _deadline = DateTime.now().add(Duration(seconds: grant.expiresIn));
@@ -78,9 +88,11 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       _schedulePoll();
       await _openAuthorization();
     } catch (error) {
-      _notice(error is DriveException ? error.message : '无法打开授权，请检查网络');
+      if (attempt == _attempt) {
+        _notice(error is DriveException ? error.message : '无法打开授权，请检查网络');
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && attempt == _attempt) setState(() => _busy = false);
     }
   }
 
@@ -94,23 +106,26 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   }
 
   Future<void> _check() async {
-    if (!mounted || _grant == null || _polling) return;
+    final grant = _grant;
+    final attempt = _attempt;
+    if (!mounted || grant == null || _checkingAttempt == attempt) return;
     if (DateTime.now().isAfter(_deadline!)) {
       _notice('设备码已过期，请重新发起授权');
       _poll?.cancel();
       return;
     }
-    _polling = true;
+    _checkingAttempt = attempt;
     try {
       await widget.controller.client.completeDevice(
-        _grant!,
+        grant,
         _key.text.trim(),
         _secret.text.trim(),
       );
+      if (!mounted || attempt != _attempt) return;
       _poll?.cancel();
-      if (!mounted) return;
       Navigator.of(context).pop(true);
     } on DriveException catch (error) {
+      if (!mounted || attempt != _attempt) return;
       if (error.code == 'slow_down') _interval += 5;
       if ([
         'authorization_pending',
@@ -127,9 +142,9 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
         _poll?.cancel();
       }
     } catch (_) {
-      _notice('检查授权失败，请重新发起授权');
+      if (attempt == _attempt) _notice('检查授权失败，请重新发起授权');
     } finally {
-      _polling = false;
+      if (_checkingAttempt == attempt) _checkingAttempt = null;
     }
   }
 
@@ -139,6 +154,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       _notice('请粘贴完整的 access token，不是授权码或网页地址');
       return;
     }
+    _cancelAuthorization();
+    final attempt = _attempt;
     setState(() {
       _busy = true;
       _message = null;
@@ -155,14 +172,17 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       } finally {
         temporary.client.close();
       }
+      if (!mounted || attempt != _attempt) return;
       await widget.controller.client.replaceSession(
         DriveSession(accessToken: text),
       );
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted && attempt == _attempt) Navigator.of(context).pop(true);
     } catch (error) {
-      _notice(error is DriveException ? error.message : '导入失败，请检查 token');
+      if (attempt == _attempt) {
+        _notice(error is DriveException ? error.message : '导入失败，请检查 token');
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && attempt == _attempt) setState(() => _busy = false);
     }
   }
 
@@ -233,8 +253,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
               ? null
               : () {
                   if (_grant != null) {
-                    _poll?.cancel();
-                    setState(() => _grant = null);
+                    _cancelAuthorization();
+                    setState(() {});
                   } else {
                     unawaited(_authorize());
                   }
@@ -337,7 +357,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             onPressed: _busy
                 ? null
                 : () async {
-                    _poll?.cancel();
+                    _cancelAuthorization();
                     await widget.controller.disconnect();
                     if (context.mounted) Navigator.of(context).pop(false);
                   },
