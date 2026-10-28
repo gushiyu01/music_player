@@ -115,6 +115,54 @@ class PlayerScreen extends StatelessWidget {
                 item.artist ?? '百度网盘',
                 style: const TextStyle(color: mutedColor, fontSize: 14),
               ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    item.extras?['source'] == 'local'
+                        ? Icons.offline_pin_outlined
+                        : Icons.cloud_outlined,
+                    size: 16,
+                    color: accentColor,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    item.extras?['source'] == 'local'
+                        ? '本地文件 · 离线播放'
+                        : item.extras?['source'] == 'demo'
+                        ? '原创试听'
+                        : '在线播放',
+                    style: const TextStyle(color: mutedColor, fontSize: 12),
+                  ),
+                  const Spacer(),
+                  AnimatedBuilder(
+                    animation: controller,
+                    builder: (_, _) {
+                      if (audio.entries.isEmpty ||
+                          controller.transfers == null) {
+                        return const SizedBox.shrink();
+                      }
+                      final entry = audio.entries[audio.index];
+                      final saved =
+                          controller.library?.localPath(entry) != null;
+                      return IconButton(
+                        tooltip: saved ? '已下载到本地' : '下载当前歌曲',
+                        onPressed: saved
+                            ? null
+                            : () {
+                                controller.transfers!.download(entry);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('已加入下载任务')),
+                                );
+                              },
+                        icon: Icon(
+                          saved ? Icons.download_done : Icons.download_outlined,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
               const SizedBox(height: 26),
               StreamBuilder<Duration>(
                 stream: audio.player.positionStream,

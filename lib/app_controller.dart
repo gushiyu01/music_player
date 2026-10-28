@@ -5,18 +5,34 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'data/baidu_client.dart';
+import 'data/offline_library.dart';
+import 'data/transfer_manager.dart';
 import 'models/drive_entry.dart';
 import 'playback/music_handler.dart';
 
 class AppController extends ChangeNotifier {
-  AppController(this.client, this.audio, this.prefs) {
+  AppController(
+    this.client,
+    this.audio,
+    this.prefs, {
+    this.library,
+    this.transfers,
+  }) {
     _timer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(savePlayback());
     });
+    library?.addListener(_localChanged);
+    transfers?.addListener(_transferChanged);
   }
   final BaiduClient client;
   final MusicHandler audio;
   final SharedPreferences prefs;
+  final OfflineLibrary? library;
+  final TransferManager? transfers;
+  final Set<MusicTransfer> _observedUploads = {};
+  bool local = false;
+  String? localDirectory;
+  String musicRoot = '/';
   late final Timer _timer;
   bool demo = true;
   bool busy = false;
@@ -30,7 +46,7 @@ class AppController extends ChangeNotifier {
 
   bool get connected => client.session.connected;
   List<DriveEntry> get visible =>
-      entries
+      (local ? _localEntries : entries)
           .where(
             (entry) =>
                 (entry.isDirectory || entry.isAudio) &&
@@ -44,9 +60,70 @@ class AppController extends ChangeNotifier {
         );
   List<DriveEntry> get songs => visible.where((e) => e.isAudio).toList();
 
+  List<DriveEntry> get _localEntries {
+    final saved = library?.entries ?? <DriveEntry>[];
+    if (localDirectory != null) {
+      return saved.where((e) => e.parent == localDirectory).toList();
+    }
+    final parents = saved.map((e) => e.parent).toSet();
+    return [
+      for (final parent in parents)
+        DriveEntry(
+          id: 'local:$parent',
+          name: parent == '/'
+              ? '根目录音乐'
+              : parent == 'assets/audio'
+              ? '原创试听'
+              : parent.split('/').last,
+          path: parent,
+          isDirectory: true,
+        ),
+    ];
+  }
+
+  void _localChanged() => notifyListeners();
+  void _transferChanged() {
+    for (final task in transfers?.tasks ?? <MusicTransfer>[]) {
+      if (task.uploading &&
+          task.status == TransferStatus.done &&
+          _observedUploads.add(task)) {
+        if (!local && !demo && task.destination == directory) {
+          unawaited(browse(directory));
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  void showLocal([String? folder]) {
+    _browseGeneration++;
+    local = true;
+    localDirectory = folder;
+    query = '';
+    busy = false;
+    error = null;
+    notifyListeners();
+  }
+
+  Future<void> setMusicRoot() async {
+    if (local || demo || busy || error != null) return;
+    musicRoot = directory;
+    await prefs.setString('music_root', musicRoot);
+    notifyListeners();
+  }
+
+  Future<void> openLibrary() async {
+    if (connected) {
+      await browse(musicRoot);
+    } else {
+      useDemo();
+    }
+  }
+
   Future<void> initialize() async {
     favorites = (prefs.getStringList('favorites') ?? []).toSet();
     directory = prefs.getString('directory') ?? '/';
+    musicRoot = prefs.getString('music_root') ?? '/';
     demo = !connected;
     try {
       final value =
@@ -55,7 +132,7 @@ class AppController extends ChangeNotifier {
       final tracks = (value['tracks'] as List? ?? [])
           .cast<Map<String, dynamic>>()
           .map(DriveEntry.fromJson)
-          .where((e) => e.demo || connected)
+          .where((e) => e.demo || connected || library?.localPath(e) != null)
           .toList();
       audio.restore(
         tracks,
@@ -80,6 +157,7 @@ class AppController extends ChangeNotifier {
   Future<void> browse(String dir, {bool more = false}) async {
     if (more && (busy || nextStart == null)) return;
     final generation = ++_browseGeneration;
+    local = false;
     demo = false;
     busy = true;
     error = null;
@@ -118,6 +196,7 @@ class AppController extends ChangeNotifier {
   void useDemo() {
     _browseGeneration++;
     demo = true;
+    local = false;
     directory = '/';
     entries = [...demoTracks];
     nextStart = null;
@@ -152,18 +231,23 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    transfers?.cancelAll();
     await audio.clear();
     await client.disconnect();
     await prefs.remove('playback');
     await prefs.remove('favorites');
     favorites.clear();
     await prefs.remove('directory');
+    await prefs.remove('music_root');
+    musicRoot = '/';
     useDemo();
   }
 
   @override
   void dispose() {
     _timer.cancel();
+    library?.removeListener(_localChanged);
+    transfers?.removeListener(_transferChanged);
     super.dispose();
   }
 }

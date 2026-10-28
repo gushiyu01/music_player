@@ -2,9 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart';
 
 import '../models/drive_entry.dart';
 import 'session_store.dart';
+import 'transfer_control.dart';
+
+part 'baidu_upload.dart';
 
 class DriveException implements Exception {
   const DriveException(this.message, {this.code = '', this.status});
@@ -97,17 +101,24 @@ class BaiduClient {
   Future<Map<String, dynamic>> _json(
     Uri uri, {
     Map<String, String>? form,
+    http.BaseRequest? request,
+    TransferControl? control,
   }) async {
     try {
-      final response =
-          await (form == null
-                  ? client.get(uri, headers: {'User-Agent': userAgent})
-                  : client.post(
-                      uri,
-                      headers: {'User-Agent': userAgent},
-                      body: form,
-                    ))
-              .timeout(const Duration(seconds: 25));
+      control?.check();
+      final outgoing =
+          request ??
+          (http.AbortableRequest(
+            form == null ? 'GET' : 'POST',
+            uri,
+            abortTrigger: control?.aborted,
+          )..bodyFields = form ?? {});
+      outgoing.followRedirects = false;
+      outgoing.headers['User-Agent'] = userAgent;
+      final response = await http.Response.fromStream(
+        await client.send(outgoing),
+      ).timeout(Duration(seconds: request == null ? 25 : 120));
+      control?.check();
       if (response.statusCode == 429) {
         throw const DriveException(
           '百度请求过于频繁，请稍后重试',
@@ -161,6 +172,8 @@ class BaiduClient {
       return data;
     } on DriveException {
       rethrow;
+    } on http.RequestAbortedException {
+      throw const DriveException('传输已取消', code: 'cancelled');
     } on TimeoutException {
       throw const DriveException('连接百度超时，请检查网络后重试', code: 'network');
     } catch (_) {
@@ -184,6 +197,8 @@ class BaiduClient {
     '-6' || '110' || '111' => '百度授权已失效，请重新连接',
     '-7' => '目录路径不合法或没有访问权限，请检查音乐目录',
     '-9' => '该文件或目录不存在',
+    '-8' || '-10' || '31061' => '网盘已有同名文件，请更名后重试；原文件已保留',
+    '31112' || '31066' => '网盘空间不足，请清理空间后重试',
     '20011' => '当前应用无权访问此目录，请检查百度应用权限',
     '31326' => '百度拒绝下载请求，请重试或检查下载权限',
     '31360' => '下载链接已过期，请重试播放',
@@ -314,8 +329,10 @@ class BaiduClient {
 
   Future<Map<String, dynamic>> _api(
     String endpoint,
-    Map<String, String> query,
-  ) async {
+    Map<String, String> query, {
+    Map<String, String>? form,
+    TransferControl? control,
+  }) async {
     var token = await accessToken();
     final generation = _generation;
     Future<Map<String, dynamic>> invoke() => _json(
@@ -323,6 +340,8 @@ class BaiduClient {
         ...query,
         'access_token': token,
       }),
+      form: form,
+      control: control,
     );
     try {
       return await invoke();
@@ -398,14 +417,21 @@ class BaiduClient {
     DriveEntry entry, {
     int? start,
     int? end,
+    TransferControl? control,
   }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
+      control?.check();
       var uri = await downloadLink(entry);
       for (var hop = 0; hop <= 5; hop++) {
         if (!isAllowedDownload(uri)) {
           throw const DriveException('百度下载跳转到了不受信任的地址', code: 'unsafe_link');
         }
-        final request = http.Request('GET', uri)..followRedirects = false;
+        control?.check();
+        final request = http.AbortableRequest(
+          'GET',
+          uri,
+          abortTrigger: control?.aborted,
+        )..followRedirects = false;
         request.headers['User-Agent'] = userAgent;
         if (start != null || end != null) {
           request.headers['Range'] =
@@ -416,6 +442,8 @@ class BaiduClient {
           response = await client
               .send(request)
               .timeout(const Duration(seconds: 25));
+        } on http.RequestAbortedException {
+          throw const DriveException('传输已取消', code: 'cancelled');
         } catch (_) {
           throw const DriveException('下载连接失败，请检查网络后重试', code: 'network');
         }

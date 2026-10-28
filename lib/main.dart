@@ -1,10 +1,14 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 
 import 'app_controller.dart';
 import 'data/baidu_client.dart';
 import 'data/session_store.dart';
+import 'data/offline_library.dart';
+import 'data/transfer_manager.dart';
 import 'playback/music_handler.dart';
 import 'ui/home_screen.dart';
 
@@ -13,8 +17,16 @@ Future<void> main() async {
   try {
     final client = BaiduClient(SecureSessionStore());
     await client.initialize();
+    final prefs = await SharedPreferences.getInstance();
+    final support = await getApplicationSupportDirectory();
+    final library = OfflineLibrary(
+      Directory('${support.path}/offline_music'),
+      prefs,
+    );
+    await library.initialize();
+    final transfers = TransferManager(client, library);
     final handler = await AudioService.init<MusicHandler>(
-      builder: () => MusicHandler(client),
+      builder: () => MusicHandler(client, library: library),
       config: const AudioServiceConfig(
         androidNotificationChannelId:
             'io.github.gushiyu01.music_player.playback',
@@ -28,7 +40,9 @@ Future<void> main() async {
     final controller = AppController(
       client,
       handler,
-      await SharedPreferences.getInstance(),
+      prefs,
+      library: library,
+      transfers: transfers,
     );
     runApp(CloudMusicApp(controller: controller));
     await controller.initialize();

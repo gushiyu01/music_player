@@ -24,6 +24,13 @@ class DriveEntry {
   final int size;
   final bool demo;
 
+  String get parent {
+    final slash = path.lastIndexOf('/');
+    return slash <= 0 ? '/' : path.substring(0, slash);
+  }
+
+  String get artist => demo ? '云间 · 原创合成试听' : parent.split('/').last;
+
   String get extension =>
       name.contains('.') ? name.split('.').last.toLowerCase() : '';
   bool get isAudio =>

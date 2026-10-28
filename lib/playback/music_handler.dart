@@ -7,11 +7,12 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../data/baidu_client.dart';
+import '../data/offline_library.dart';
 import '../models/drive_entry.dart';
 import 'baidu_audio_source.dart';
 
 class MusicHandler extends BaseAudioHandler with SeekHandler {
-  MusicHandler(this.client) {
+  MusicHandler(this.client, {this.library}) {
     player.playbackEventStream.listen((_) => _broadcast());
     player.errorStream.listen((_) {
       if (!loading.value) {
@@ -37,6 +38,8 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
   }
 
   final BaiduClient client;
+  final OfflineLibrary? library;
+  bool onlineOnly = false;
   final AudioPlayer player = AudioPlayer();
   final ValueNotifier<String?> error = ValueNotifier(null);
   final ValueNotifier<bool> loading = ValueNotifier(false);
@@ -70,7 +73,7 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
   MediaItem _item(DriveEntry entry) => MediaItem(
     id: entry.id,
     title: entry.title,
-    artist: entry.demo ? '云间 · 原创合成试听' : '百度网盘',
+    artist: entry.demo ? '云间 · 原创合成试听' : entry.artist,
     album: entry.demo
         ? '离线演示'
         : entry.path
@@ -78,9 +81,14 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
               .replaceAll('/', ' / '),
   );
 
-  Future<void> playEntries(List<DriveEntry> tracks, int current) async {
+  Future<void> playEntries(
+    List<DriveEntry> tracks,
+    int current, {
+    bool onlineOnly = false,
+  }) async {
     if (tracks.isEmpty) return;
     entries = List.unmodifiable(tracks);
+    this.onlineOnly = onlineOnly;
     queue.add(tracks.map(_item).toList());
     await _load(current.clamp(0, tracks.length - 1));
   }
@@ -98,7 +106,21 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
       await player.stop();
       if (generation != _loadGeneration) return;
       final entry = entries[current];
-      final source = entry.demo
+      final local = onlineOnly ? null : library?.localPath(entry);
+      mediaItem.add(
+        queue.value[index].copyWith(
+          extras: {
+            'source': local != null
+                ? 'local'
+                : entry.demo
+                ? 'demo'
+                : 'online',
+          },
+        ),
+      );
+      final source = local != null
+          ? AudioSource.file(local)
+          : entry.demo
           ? AudioSource.asset(entry.path)
           : BaiduAudioSource(client, entry);
       await player.setAudioSource(source, initialPosition: position);
