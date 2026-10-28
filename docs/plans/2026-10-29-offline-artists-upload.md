@@ -6,7 +6,7 @@
 
 **Architecture:** Flutter talks directly to Baidu HTTPS APIs. A configurable music root opens its real child directories as singer cards; nested album directories remain navigable. App-private persistent files and a local manifest provide offline playback without a token. A serial transfer queue reports progress, cancellation and errors; partial downloads are never playable. Upload uses precreate, sequential 4 MiB parts with MD5 verification, and create with rtype=0 so existing files are not overwritten.
 
-**Tech Stack:** Existing Flutter/audio_service/just_audio/http; Flutter file_selector and path_provider; crypto for file identifiers and upload MD5.
+**Tech Stack:** Existing Flutter/audio_service/just_audio/http; file_picker and path_provider; crypto for file identifiers and upload MD5. Source inspection found that file_selector_android reads all bytes before returning a selection; file_picker's cached-file XFile is used instead to keep large audio reads bounded.
 
 ## 1. Protocol and local storage
 
@@ -42,5 +42,5 @@ Real Baidu directory permissions, quota, speed and upload success require the us
 ## Primary references
 
 - Baidu SDK upload: https://github.com/baidu-netdisk/baidu-drive-sdk-go/tree/main/baidudriver/api
-- Flutter file selector: https://pub.dev/packages/file_selector
+- File picker: https://pub.dev/packages/file_picker
 - Flutter application data paths: https://pub.dev/packages/path_provider

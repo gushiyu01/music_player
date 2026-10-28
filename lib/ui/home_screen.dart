@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:file_selector/file_selector.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../app_controller.dart';
 import '../main.dart';
@@ -68,24 +68,19 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _upload() async {
     final destination = app.directory;
     try {
-      final files = await openFiles(
-        acceptedTypeGroups: const [
-          XTypeGroup(
-            label: '音乐',
-            extensions: [
-              'mp3',
-              'flac',
-              'm4a',
-              'aac',
-              'wav',
-              'ogg',
-              'opus',
-              'aiff',
-              'aif',
-              'amr',
-            ],
-            uniformTypeIdentifiers: ['public.audio'],
-          ),
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: [
+          'mp3',
+          'flac',
+          'm4a',
+          'aac',
+          'wav',
+          'ogg',
+          'opus',
+          'aiff',
+          'aif',
+          'amr',
         ],
       );
       if (!mounted || files.isEmpty) return;
@@ -94,12 +89,15 @@ class _HomeScreenState extends State<HomeScreen> {
         final entry = DriveEntry(id: '', name: file.name, path: '');
         if (!entry.isAudio) continue;
         final size = await file.length();
-        if (size <= 0 || size > BaiduUpload.maxUploadSize) continue;
+        if (size == null || size <= 0 || size > BaiduUpload.maxUploadSize) {
+          continue;
+        }
+        final selected = file.xFile;
         app.transfers?.upload(
           UploadInput(
             name: file.name,
             size: size,
-            read: (start, end) => file.openRead(start, end),
+            read: (start, end) => selected.openRead(start, end),
           ),
           destination,
         );
