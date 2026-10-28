@@ -18,7 +18,9 @@ def screenshot(name):
     (evidence / f'{name}.png').write_bytes(adb('exec-out', 'screencap', '-p', binary=True))
 
 def ui():
-    adb('shell', 'uiautomator', 'dump', '/sdcard/music-window.xml')
+    output = adb('shell', 'uiautomator', 'dump', '--compressed', '/sdcard/music-window.xml')
+    if 'dumped to:' not in output:
+        return ET.Element('hierarchy')
     value = adb('shell', 'cat', '/sdcard/music-window.xml')
     (evidence / 'latest-ui.xml').write_text(value, encoding='utf-8')
     return ET.fromstring(value)
@@ -83,8 +85,14 @@ try:
     tap_label('云间 · 原创合成试听')
     time.sleep(2)
     screenshot('03-player')
+    # A live progress slider continuously changes the accessibility tree.
+    # Pause after proving system resume so UIAutomator can obtain an idle dump.
+    adb('shell', 'input', 'keyevent', 'KEYCODE_MEDIA_PAUSE')
+    time.sleep(2)
+    media_state(2, 'before-queue')
     tap_label('播放队列')
     time.sleep(1)
+    find_label('接下来播放')
     screenshot('04-queue')
     print('Release APK installed and launched; demo playback, background playback and system pause/resume passed.')
 finally:
