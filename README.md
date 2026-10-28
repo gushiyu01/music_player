@@ -5,6 +5,8 @@
 
 ## 安装 Android
 
+首个 MVP 的安装包放在 [Releases](https://github.com/gushiyu01/music_player/releases/latest)，下载 `cloud-music-android.apk` 即可安装。SHA256 校验文件与 APK 一起提供。
+
 打开本仓库 **Actions → Build personal music player → 最近一次成功运行 → Artifacts → cloud-music-android**，下载并解压，安装 `cloud-music-android.apk`。
 
 每次推送 main 或手动运行工作流都会重新构建。个人发布签名存放在 GitHub Actions Secrets，同一签名的后续版本可覆盖安装。首次安装需要允许当前下载工具安装应用。没有内置百度密钥，构建也不需要百度凭据。
@@ -13,7 +15,7 @@
 
 ## 连接自己的百度网盘
 
-1. 在百度网盘开放平台创建自己的应用并开通所需文件读取/下载权限，取得自己的 **AppKey** 和 **SecretKey**。
+1. 使用自己已有的百度网盘开放平台应用，或创建新应用，开通所需文件读取/下载权限，取得自己的 **AppKey** 和 **SecretKey**。
 2. 在 App 的 **连接** 页面填写这两项，点击 **在百度页面授权**。
 3. 在打开的百度官方页面登录自己的账号，输入 App 显示的设备码并确认授权。
 4. 返回 App，自动检查授权成功后即可浏览目录。也可点击目录路径直接填写 `/音乐` 等网盘路径。
@@ -59,6 +61,10 @@ flutter test
 ```
 
 CI 执行静态分析、自动测试、Android release APK 构建、Android 模拟器演示播放验证，以及 iOS release 无签名编译。设备截图和系统媒体会话日志保存在 `android-device-evidence` 产物。真实网盘授权及真实音频性能需要在使用者设备和账号下联调，模拟 API 测试不代表已经完成真实账号验证。
+
+首版已完成的验证及实测边界见 [验证记录](docs/validation.md)。
+
+发布新版本时，手动运行 **Publish verified Android APK**，填入完整成功的构建 Run ID 和新版本标签。发布任务校验构建状态、APK 校验和与签名，再把同一个已测试 APK 发布到 Releases。
 
 可选仓库 Secrets（已经为当前个人仓库配置）：
 

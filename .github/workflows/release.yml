@@ -1,0 +1,49 @@
+name: Publish verified Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Build personal music player run ID
+        required: true
+        type: string
+      tag:
+        description: New release tag
+        required: true
+        default: v0.1.0
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_RUN: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Require a successful build from main
+        run: |
+          [[ "$BUILD_RUN" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN" > build-run.json
+          jq -e --arg repo "$GH_REPO" '.conclusion == "success" and .event == "push" and .head_branch == "main" and .repository.full_name == $repo and .name == "Build personal music player"' build-run.json
+          echo "SOURCE_SHA=$(jq -r .head_sha build-run.json)" >> "$GITHUB_ENV"
+      - name: Download and verify the tested APK
+        run: |
+          gh run download "$BUILD_RUN" --name cloud-music-android --dir release-apk
+          cd release-apk
+          sha256sum --check SHA256SUMS.txt
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          "$signer" verify --print-certs cloud-music-android.apk
+      - name: Publish APK and checksum
+        run: |
+          cp docs/releases/mvp.md release-notes.md
+          printf '\nVerified build: https://github.com/%s/actions/runs/%s\nSource: %s\n' "$GH_REPO" "$BUILD_RUN" "$SOURCE_SHA" >> release-notes.md
+          gh release create "$RELEASE_TAG" release-apk/cloud-music-android.apk release-apk/SHA256SUMS.txt --target "$SOURCE_SHA" --title "云间 $RELEASE_TAG · 百度网盘直连 MVP" --notes-file release-notes.md
