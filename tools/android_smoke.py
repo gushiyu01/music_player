@@ -19,6 +19,7 @@ def screenshot(name):
 def ui():
     adb('shell', 'uiautomator', 'dump', '/sdcard/music-window.xml')
     value = adb('shell', 'cat', '/sdcard/music-window.xml')
+    (evidence / 'latest-ui.xml').write_text(value, encoding='utf-8')
     return ET.fromstring(value)
 
 def tap_label(label):
@@ -58,7 +59,7 @@ try:
     assert re.search(r'state=3\b', sessions), 'System play did not resume the player'
     adb('shell', 'monkey', '-p', package, '-c', 'android.intent.category.LAUNCHER', '1')
     time.sleep(2)
-    tap_label('原创合成试听')
+    tap_label('云间 · 原创合成试听')
     time.sleep(2)
     screenshot('03-player')
     tap_label('播放队列')

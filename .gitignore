@@ -16,6 +16,8 @@ coverage/
 key.properties
 local.properties
 *.log
+__pycache__/
+*.pyc
 artifacts/
 android/.gradle/
 android/captures/
