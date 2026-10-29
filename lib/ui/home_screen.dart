@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import '../app_controller.dart';
 import '../main.dart';
 import '../models/drive_entry.dart';
+import '../models/music_directory.dart';
 import '../data/baidu_client.dart';
 import 'transfers_screen.dart';
 import 'connection_screen.dart';
@@ -34,7 +35,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (result == true) {
       await app.audio.clear();
-      await app.browse('/');
+      await app.openLibrary();
+      if (mounted && app.needsMusicRoot) await _chooseDirectory();
     }
     if (mounted) setState(() {});
   }
@@ -67,6 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _upload() async {
     final destination = app.directory;
+    if (!app.browsingMusic || !app.containsDirectory(destination)) return;
     try {
       final files = await FilePicker.pickFiles(
         type: FileType.custom,
@@ -84,6 +87,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       );
       if (!mounted || files.isEmpty) return;
+      if (!app.containsDirectory(destination)) {
+        _message('音乐目录已更改，请重新选择上传位置');
+        return;
+      }
       var added = 0;
       for (final file in files) {
         final entry = DriveEntry(id: '', name: file.name, path: '');
@@ -107,22 +114,25 @@ class _HomeScreenState extends State<HomeScreen> {
         added == 0 ? '请选择不超过 2 GB 的音乐文件' : '已添加 $added 首，上传到 $destination',
       );
       if (added > 0 && mounted) _transfers();
-    } catch (_) {
-      _message('无法读取所选文件，请重新选择手机中的音乐');
+    } catch (failure) {
+      _message(
+        failure is DriveException ? failure.message : '无法读取所选文件，请重新选择手机中的音乐',
+      );
     }
   }
 
   Future<void> _createFolder() async {
+    if (!app.browsingMusic) return;
     final input = TextEditingController();
     final destination = app.directory;
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('新建歌手目录'),
+        title: const Text('新建目录'),
         content: TextField(
           controller: input,
           autofocus: true,
-          decoration: const InputDecoration(hintText: '例如：五月天'),
+          decoration: const InputDecoration(hintText: '例如：五月天、摇滚或专辑名称'),
           onSubmitted: (value) => Navigator.pop(context, value),
         ),
         actions: [
@@ -139,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (name == null || name.trim().isEmpty) return;
     try {
-      await app.client.createFolder(destination, name);
+      await app.createFolder(destination, name);
       if (!app.local && app.directory == destination) {
         await app.browse(destination);
       }
@@ -176,36 +186,77 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _chooseDirectory() async {
-    final input = TextEditingController(text: app.demo ? '/' : app.directory);
+    final form = GlobalKey<FormState>();
+    var input = app.musicRoot ?? '';
     final value = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('打开音乐目录'),
-        content: TextField(
-          controller: input,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '/音乐'),
-          onSubmitted: (value) => Navigator.pop(context, value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
+      builder: (context) {
+        void submit() {
+          if (form.currentState!.validate()) {
+            Navigator.pop(context, MusicDirectory.normalize(input));
+          }
+        }
+
+        return AlertDialog(
+          title: const Text('指定音乐目录'),
+          scrollable: true,
+          content: Form(
+            key: form,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('子目录将作为分类或歌手展示，只加载你打开的目录。'),
+                const SizedBox(height: 18),
+                TextFormField(
+                  initialValue: input,
+                  autofocus: true,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: '音乐目录路径',
+                    hintText: '/音乐',
+                    errorMaxLines: 3,
+                  ),
+                  onChanged: (value) => input = value,
+                  validator: (value) {
+                    try {
+                      MusicDirectory.normalize(value ?? '');
+                      return null;
+                    } on DriveException catch (failure) {
+                      return failure.message;
+                    }
+                  },
+                  onFieldSubmitted: (_) => submit(),
+                ),
+              ],
+            ),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, input.text),
-            child: const Text('打开'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(onPressed: submit, child: const Text('使用此目录')),
+          ],
+        );
+      },
     );
-    if (value != null && value.trim().isNotEmpty) await _navigate(value.trim());
+    if (value != null && mounted) {
+      _search.clear();
+      setState(() => _onlyFavorites = false);
+      try {
+        await app.configureMusicRoot(value);
+      } on DriveException catch (failure) {
+        _message(failure.message);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: app,
     builder: (context, _) {
+      final rootSetup = app.needsMusicRoot && !app.local && !app.demo;
       final entries = app.visible
           .where(
             (e) => !_onlyFavorites || (!e.isDirectory && app.isFavorite(e)),
@@ -258,7 +309,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: RefreshIndicator(
                 onRefresh: () async {
-                  if (!app.demo && !app.local) await app.browse(app.directory);
+                  if (app.browsingMusic) await app.browse(app.directory);
                 },
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -298,8 +349,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             Text(
                               app.local
                                   ? '把喜欢的歌，\n留在身边。'
+                                  : rootSetup
+                                  ? '为收藏的歌，\n选一个家。'
                                   : !app.demo && app.directory == app.musicRoot
-                                  ? '按歌手收藏，\n随心听见。'
+                                  ? '按目录收藏，\n随心听见。'
                                   : '让收藏，\n重新被听见。',
                               style: const TextStyle(
                                 fontSize: 34,
@@ -310,6 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 22),
                             TextField(
+                              enabled: !rootSetup,
                               controller: _search,
                               onChanged: app.search,
                               decoration: InputDecoration(
@@ -317,7 +371,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ? app.localDirectory == null
                                           ? '搜索已下载的目录'
                                           : '搜索当前目录的音乐'
-                                    : '搜索当前目录的歌手或音乐',
+                                    : '搜索当前目录的分类、歌手或音乐',
                                 prefixIcon: const Icon(
                                   Icons.search,
                                   color: mutedColor,
@@ -369,16 +423,51 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                     const SizedBox(width: 8),
                                     IconButton.filled(
-                                      tooltip: app.connected ? '浏览网盘' : '连接网盘',
+                                      tooltip: app.connected ? '打开音乐库' : '连接网盘',
                                       onPressed: app.connected
-                                          ? () => _navigate('/')
+                                          ? app.openLibrary
                                           : _connect,
                                       icon: const Icon(Icons.arrow_forward),
                                     ),
                                   ],
                                 ),
                               ),
-                            if (!app.demo && !app.local) ...[
+                            if (rootSetup)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: surfaceColor,
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      '先指定音乐目录',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    const Text(
+                                      '例如 /音乐，里面的“五月天”“许嵩”“摇滚”等子目录会展示为分类或歌手。',
+                                      style: TextStyle(
+                                        color: mutedColor,
+                                        height: 1.6,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    FilledButton.icon(
+                                      onPressed: _chooseDirectory,
+                                      icon: const Icon(Icons.folder_outlined),
+                                      label: const Text('指定音乐目录'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (app.browsingMusic) ...[
                               const SizedBox(height: 12),
                               Wrap(
                                 spacing: 8,
@@ -398,7 +487,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Icons.create_new_folder_outlined,
                                       size: 18,
                                     ),
-                                    label: const Text('新建歌手目录'),
+                                    label: const Text('新建目录'),
                                   ),
                                 ],
                               ),
@@ -455,6 +544,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                                         '本地下载 / 按目录收藏')
                                             : app.demo
                                             ? 'DEMO / 原创试听'
+                                            : rootSetup
+                                            ? '尚未指定音乐目录'
                                             : app.directory,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -478,9 +569,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       size: 20,
                                     ),
                                   ),
-                                if (!app.demo &&
-                                    !app.local &&
-                                    app.directory != '/')
+                                if (app.canGoUp)
                                   IconButton(
                                     tooltip: '返回上级目录',
                                     onPressed: () {
@@ -488,18 +577,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                         0,
                                         app.directory.lastIndexOf('/'),
                                       );
-                                      unawaited(
-                                        _navigate(
-                                          parent.isEmpty ? '/' : parent,
-                                        ),
-                                      );
+                                      unawaited(_navigate(parent));
                                     },
                                     icon: const Icon(
                                       Icons.drive_folder_upload_outlined,
                                       size: 20,
                                     ),
                                   ),
-                                if (!app.demo && !app.local)
+                                if (app.browsingMusic)
                                   IconButton(
                                     tooltip: '刷新目录',
                                     onPressed: app.busy
@@ -507,14 +592,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                         : () => _navigate(app.directory),
                                     icon: const Icon(Icons.refresh, size: 20),
                                   ),
-                                if (!app.demo && !app.local)
+                                if (app.browsingMusic)
                                   PopupMenuButton<String>(
                                     tooltip: '目录设置',
                                     onSelected: (value) async {
-                                      if (value == 'root') {
-                                        await app.setMusicRoot();
-                                        _message('已设为音乐库根目录');
-                                      }
                                       if (value == 'open') {
                                         await _chooseDirectory();
                                       }
@@ -525,12 +606,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     },
                                     itemBuilder: (_) => const [
                                       PopupMenuItem(
-                                        value: 'root',
-                                        child: Text('将此目录设为音乐库'),
-                                      ),
-                                      PopupMenuItem(
                                         value: 'open',
-                                        child: Text('输入网盘目录路径'),
+                                        child: Text('更改音乐目录'),
                                       ),
                                       PopupMenuItem(
                                         value: 'demo',
@@ -589,7 +666,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Center(child: CircularProgressIndicator()),
                         ),
                       ),
-                    if (!app.busy && entries.isEmpty)
+                    if (!app.busy && entries.isEmpty && !rootSetup)
                       SliverToBoxAdapter(
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(24, 32, 24, 48),
@@ -617,7 +694,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               if (!app.demo && !app.local)
                                 TextButton(
                                   onPressed: _chooseDirectory,
-                                  child: const Text('打开其他目录'),
+                                  child: const Text('更改音乐目录'),
                                 ),
                             ],
                           ),
@@ -664,7 +741,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                         ),
                                       ),
                                       Text(
-                                        app.local ? '已下载 · 点击听歌' : '歌手 / 专辑目录',
+                                        app.local
+                                            ? '已下载 · 点击听歌'
+                                            : app.directory == app.musicRoot
+                                            ? '分类 / 歌手目录'
+                                            : '子目录 / 专辑',
                                         style: const TextStyle(
                                           color: mutedColor,
                                           fontSize: 10,

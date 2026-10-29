@@ -8,6 +8,7 @@ import 'data/baidu_client.dart';
 import 'data/offline_library.dart';
 import 'data/transfer_manager.dart';
 import 'models/drive_entry.dart';
+import 'models/music_directory.dart';
 import 'playback/music_handler.dart';
 
 class AppController extends ChangeNotifier {
@@ -23,6 +24,7 @@ class AppController extends ChangeNotifier {
     });
     library?.addListener(_localChanged);
     transfers?.addListener(_transferChanged);
+    transfers?.canUploadTo = containsDirectory;
   }
   final BaiduClient client;
   final MusicHandler audio;
@@ -32,7 +34,7 @@ class AppController extends ChangeNotifier {
   final Set<MusicTransfer> _observedUploads = {};
   bool local = false;
   String? localDirectory;
-  String musicRoot = '/';
+  String? musicRoot;
   late final Timer _timer;
   bool demo = true;
   bool busy = false;
@@ -45,6 +47,11 @@ class AppController extends ChangeNotifier {
   Set<String> favorites = {};
 
   bool get connected => client.session.connected;
+  bool get needsMusicRoot => connected && musicRoot == null;
+  bool get browsingMusic => !local && !demo && musicRoot != null;
+  bool get canGoUp => browsingMusic && directory != musicRoot;
+  bool containsDirectory(String path) =>
+      connected && MusicDirectory.contains(musicRoot, path);
   List<DriveEntry> get visible =>
       (local ? _localEntries : entries)
           .where(
@@ -105,16 +112,52 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setMusicRoot() async {
-    if (local || demo || busy || error != null) return;
-    musicRoot = directory;
-    await prefs.setString('music_root', musicRoot);
+  Future<void> configureMusicRoot(String input) async {
+    final root = MusicDirectory.normalize(input);
+    if (!connected) {
+      throw const DriveException('请先连接百度网盘', code: 'not_connected');
+    }
+    if (musicRoot != root) {
+      musicRoot = root;
+      _browseGeneration++;
+      // A queued upload must never silently continue into the previous library.
+      for (final task in transfers?.tasks ?? <MusicTransfer>[]) {
+        if (task.uploading && !containsDirectory(task.destination)) {
+          transfers?.cancel(task);
+        }
+      }
+    }
+    await prefs.setString('music_root', root);
+    if (musicRoot == root) await browse(root);
+  }
+
+  void showRootSetup() {
+    _browseGeneration++;
+    local = false;
+    demo = false;
+    directory = '';
+    entries = [];
+    nextStart = null;
+    query = '';
+    error = null;
+    busy = false;
     notifyListeners();
+  }
+
+  Future<void> createFolder(String destination, String name) async {
+    if (!containsDirectory(destination)) {
+      throw const DriveException('只能在指定音乐目录内新建文件夹', code: 'outside_root');
+    }
+    await client.createFolder(destination, name);
   }
 
   Future<void> openLibrary() async {
     if (connected) {
-      await browse(musicRoot);
+      if (musicRoot == null) {
+        showRootSetup();
+      } else {
+        await browse(musicRoot!);
+      }
     } else {
       useDemo();
     }
@@ -122,8 +165,17 @@ class AppController extends ChangeNotifier {
 
   Future<void> initialize() async {
     favorites = (prefs.getStringList('favorites') ?? []).toSet();
-    directory = prefs.getString('directory') ?? '/';
-    musicRoot = prefs.getString('music_root') ?? '/';
+    try {
+      musicRoot = MusicDirectory.normalize(prefs.getString('music_root') ?? '');
+    } on DriveException {
+      musicRoot = null;
+      await prefs.remove('music_root');
+      await prefs.remove('directory');
+    }
+    final previous = prefs.getString('directory') ?? '';
+    directory = containsDirectory(previous)
+        ? MusicDirectory.normalize(previous)
+        : musicRoot ?? '';
     demo = !connected;
     try {
       final value =
@@ -132,7 +184,12 @@ class AppController extends ChangeNotifier {
       final tracks = (value['tracks'] as List? ?? [])
           .cast<Map<String, dynamic>>()
           .map(DriveEntry.fromJson)
-          .where((e) => e.demo || connected || library?.localPath(e) != null)
+          .where(
+            (e) =>
+                e.demo ||
+                containsDirectory(e.path) ||
+                library?.localPath(e) != null,
+          )
           .toList();
       audio.restore(
         tracks,
@@ -143,7 +200,11 @@ class AppController extends ChangeNotifier {
       /* Corrupt local playback state must not prevent opening the app. */
     }
     if (connected) {
-      await browse(directory);
+      if (musicRoot == null) {
+        showRootSetup();
+      } else {
+        await browse(directory);
+      }
     } else {
       notifyListeners();
     }
@@ -155,6 +216,13 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> browse(String dir, {bool more = false}) async {
+    if (!containsDirectory(dir)) {
+      error = musicRoot == null ? '请先指定音乐目录' : '只能浏览指定音乐目录及其子目录';
+      notifyListeners();
+      return;
+    }
+    dir = MusicDirectory.normalize(dir);
+    if (more && dir != directory) return;
     if (more && (busy || nextStart == null)) return;
     final generation = ++_browseGeneration;
     local = false;
@@ -176,7 +244,9 @@ class AppController extends ChangeNotifier {
       if (generation != _browseGeneration) return;
       final unique = {for (final entry in entries) entry.id: entry};
       for (final entry in page.entries) {
-        unique[entry.id] = entry;
+        if (containsDirectory(entry.path) && entry.parent == dir) {
+          unique[entry.id] = entry;
+        }
       }
       entries = unique.values.toList();
       nextStart = page.nextStart;
@@ -239,7 +309,7 @@ class AppController extends ChangeNotifier {
     favorites.clear();
     await prefs.remove('directory');
     await prefs.remove('music_root');
-    musicRoot = '/';
+    musicRoot = null;
     useDemo();
   }
 
@@ -248,6 +318,7 @@ class AppController extends ChangeNotifier {
     _timer.cancel();
     library?.removeListener(_localChanged);
     transfers?.removeListener(_transferChanged);
+    transfers?.canUploadTo = null;
     super.dispose();
   }
 }

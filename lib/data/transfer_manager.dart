@@ -41,6 +41,7 @@ class TransferManager extends ChangeNotifier {
   final OfflineLibrary library;
   final AssetBundle assets;
   final List<MusicTransfer> tasks = [];
+  bool Function(String directory)? canUploadTo;
   bool _draining = false;
   DateTime _lastProgress = DateTime(2000);
   int get activeCount => tasks.where((t) => t.active).length;
@@ -68,6 +69,9 @@ class TransferManager extends ChangeNotifier {
   }
 
   void upload(UploadInput input, String directory) {
+    if (canUploadTo?.call(directory) == false) {
+      throw const DriveException('只能上传到指定音乐目录内', code: 'outside_root');
+    }
     tasks.add(MusicTransfer.upload(input, directory));
     notifyListeners();
     unawaited(_drain());
@@ -91,6 +95,12 @@ class TransferManager extends ChangeNotifier {
 
   void retry(MusicTransfer task) {
     if (task.active || task.status == TransferStatus.done) return;
+    if (task.uploading && canUploadTo?.call(task.destination) == false) {
+      task.status = TransferStatus.failed;
+      task.error = '原上传目录不在当前音乐目录内，请在音乐库重新选择文件上传';
+      notifyListeners();
+      return;
+    }
     task.control = TransferControl();
     task.bytes = 0;
     task.error = null;

@@ -1,7 +1,7 @@
 name: music_player
 description: A personal Flutter music player that connects directly to Baidu Netdisk.
 publish_to: none
-version: 0.2.0+2
+version: 0.2.1+3
 
 environment:
   sdk: '>=3.10.0 <4.0.0'
