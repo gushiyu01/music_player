@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'data/baidu_client.dart';
 import 'data/offline_library.dart';
 import 'data/transfer_manager.dart';
+import 'data/song_details_repository.dart';
+import 'data/online_catalog.dart';
 import 'models/drive_entry.dart';
 import 'models/music_directory.dart';
 import 'playback/music_handler.dart';
@@ -18,6 +20,8 @@ class AppController extends ChangeNotifier {
     this.prefs, {
     this.library,
     this.transfers,
+    this.details,
+    this.catalog,
   }) {
     _timer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(savePlayback());
@@ -25,12 +29,37 @@ class AppController extends ChangeNotifier {
     library?.addListener(_localChanged);
     transfers?.addListener(_transferChanged);
     transfers?.canUploadTo = containsDirectory;
+    details?.canRead = (path) =>
+        containsDirectory(path) && !_removedPaths.contains(path);
+    details?.addListener(_localChanged);
+    _mediaSubscription = audio.mediaItem.listen((item) {
+      if (item == null ||
+          audio.entries.isEmpty ||
+          audio.index >= audio.entries.length) {
+        return;
+      }
+      final entry = audio.entries[audio.index];
+      if (_detailsEntry == '${entry.id}:${entry.path}') return;
+      _detailsEntry = '${entry.id}:${entry.path}';
+      if (details != null) {
+        unawaited(
+          details!.load(entry).catchError((_) => details!.cached(entry)),
+        );
+      }
+    });
   }
   final BaiduClient client;
   final MusicHandler audio;
   final SharedPreferences prefs;
   final OfflineLibrary? library;
   final TransferManager? transfers;
+  final SongDetailsRepository? details;
+  final OnlineCatalog? catalog;
+  StreamSubscription<dynamic>? _mediaSubscription;
+  String? _detailsEntry;
+  final Set<String> mutating = {};
+  final Set<String> _removedPaths = {};
+  String? operationNotice;
   final Set<MusicTransfer> _observedUploads = {};
   bool local = false;
   String? localDirectory;
@@ -120,6 +149,7 @@ class AppController extends ChangeNotifier {
     if (musicRoot != root) {
       musicRoot = root;
       _browseGeneration++;
+      details?.invalidatePending();
       // A queued upload must never silently continue into the previous library.
       for (final task in transfers?.tasks ?? <MusicTransfer>[]) {
         if (task.uploading && !containsDirectory(task.destination)) {
@@ -149,6 +179,105 @@ class AppController extends ChangeNotifier {
       throw const DriveException('只能在指定音乐目录内新建文件夹', code: 'outside_root');
     }
     await client.createFolder(destination, name);
+  }
+
+  bool canManage(DriveEntry entry) =>
+      !entry.demo &&
+      entry.isAudio &&
+      containsDirectory(entry.path) &&
+      !_removedPaths.contains(entry.path) &&
+      !mutating.contains(entry.id);
+
+  Future<DirectoryPage> listMusicFolders(String path, {int start = 0}) async {
+    if (!containsDirectory(path)) {
+      throw const DriveException('目标必须在指定音乐目录内', code: 'outside_root');
+    }
+    final page = await client.listDirectory(path, start: start);
+    if (!containsDirectory(path)) {
+      throw const DriveException('音乐目录已更改，请重新选择', code: 'outside_root');
+    }
+    return DirectoryPage(
+      page.entries
+          .where(
+            (e) =>
+                e.isDirectory && e.parent == path && containsDirectory(e.path),
+          )
+          .toList(),
+      page.nextStart,
+    );
+  }
+
+  Future<void> moveSong(DriveEntry entry, String destination) async {
+    destination = MusicDirectory.normalize(destination);
+    if (!containsDirectory(destination)) {
+      throw const DriveException('目标必须在指定音乐目录内', code: 'outside_root');
+    }
+    await _mutate(entry, destination: destination);
+  }
+
+  Future<void> deleteSong(DriveEntry entry) => _mutate(entry);
+
+  Future<void> _mutate(DriveEntry entry, {String? destination}) async {
+    if (!canManage(entry)) {
+      throw const DriveException('歌曲正在操作中或不在当前音乐目录内', code: 'unavailable');
+    }
+    if (transfers?.tasks.any(
+          (t) => t.active && !t.uploading && t.entry?.id == entry.id,
+        ) ==
+        true) {
+      throw const DriveException('请先完成或取消这首歌的下载任务', code: 'transfer_active');
+    }
+    mutating.add(entry.id);
+    operationNotice = null;
+    notifyListeners();
+    try {
+      // Stop only after the user has confirmed; a failure leaves all queue entries intact.
+      final queued = audio.entries.any(
+        (e) => e.id == entry.id && e.path == entry.path,
+      );
+      if (queued &&
+          destination == null &&
+          audio.entries[audio.index].id == entry.id) {
+        await audio.pause();
+      }
+      if (destination == null) {
+        await client.deleteSong(entry);
+      } else {
+        await client.moveSong(entry, destination);
+      }
+      transfers?.retire(entry);
+      _removedPaths.add(entry.path);
+      _browseGeneration++;
+      busy = false;
+      details?.invalidatePending();
+      entries = entries.where((e) => e.path != entry.path).toList();
+      if (destination == null) {
+        if (queued) await audio.removeEntry(entry);
+      } else {
+        final replacement = DriveEntry(
+          id: entry.id,
+          name: entry.name,
+          path: BaiduUpload.childPath(destination, entry.name),
+          size: entry.size,
+        );
+        _removedPaths.remove(replacement.path);
+        try {
+          await library?.relocate(entry, replacement);
+          await details?.move(entry, replacement);
+        } catch (_) {
+          operationNotice = '网盘移动成功，本地副本或资料目录更新失败；原本地下载仍可保留，请刷新检查';
+        }
+        if (queued) audio.replaceEntry(entry, replacement);
+      }
+      try {
+        await savePlayback();
+      } catch (_) {
+        operationNotice = '网盘操作成功，本机播放进度保存失败，请刷新列表检查';
+      }
+    } finally {
+      mutating.remove(entry.id);
+      notifyListeners();
+    }
   }
 
   Future<void> openLibrary() async {
@@ -246,6 +375,8 @@ class AppController extends ChangeNotifier {
       for (final entry in page.entries) {
         if (containsDirectory(entry.path) && entry.parent == dir) {
           unique[entry.id] = entry;
+          _removedPaths.remove(entry.path);
+          transfers?.allow(entry);
         }
       }
       entries = unique.values.toList();
@@ -301,6 +432,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    details?.invalidatePending();
     transfers?.cancelAll();
     await audio.clear();
     await client.disconnect();
@@ -319,6 +451,9 @@ class AppController extends ChangeNotifier {
     library?.removeListener(_localChanged);
     transfers?.removeListener(_transferChanged);
     transfers?.canUploadTo = null;
+    details?.removeListener(_localChanged);
+    details?.canRead = null;
+    unawaited(_mediaSubscription?.cancel());
     super.dispose();
   }
 }

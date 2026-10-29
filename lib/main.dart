@@ -9,6 +9,8 @@ import 'data/baidu_client.dart';
 import 'data/session_store.dart';
 import 'data/offline_library.dart';
 import 'data/transfer_manager.dart';
+import 'data/song_details_repository.dart';
+import 'data/online_catalog.dart';
 import 'playback/music_handler.dart';
 import 'ui/home_screen.dart';
 
@@ -25,8 +27,14 @@ Future<void> main() async {
     );
     await library.initialize();
     final transfers = TransferManager(client, library);
+    final details = SongDetailsRepository(
+      Directory('${support.path}/song_details'),
+      client,
+      library: library,
+    );
+    await details.initialize();
     final handler = await AudioService.init<MusicHandler>(
-      builder: () => MusicHandler(client, library: library),
+      builder: () => MusicHandler(client, library: library, details: details),
       config: const AudioServiceConfig(
         androidNotificationChannelId:
             'io.github.gushiyu01.music_player.playback',
@@ -43,6 +51,8 @@ Future<void> main() async {
       prefs,
       library: library,
       transfers: transfers,
+      details: details,
+      catalog: OnlineCatalog(),
     );
     runApp(CloudMusicApp(controller: controller));
     await controller.initialize();

@@ -8,11 +8,13 @@ import 'package:just_audio/just_audio.dart';
 
 import '../data/baidu_client.dart';
 import '../data/offline_library.dart';
+import '../data/song_details_repository.dart';
 import '../models/drive_entry.dart';
 import 'baidu_audio_source.dart';
 
 class MusicHandler extends BaseAudioHandler with SeekHandler {
-  MusicHandler(this.client, {this.library}) {
+  MusicHandler(this.client, {this.library, this.details}) {
+    details?.addListener(_detailsChanged);
     player.playbackEventStream.listen((_) => _broadcast());
     player.errorStream.listen((_) {
       if (!loading.value) {
@@ -39,6 +41,7 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
 
   final BaiduClient client;
   final OfflineLibrary? library;
+  final SongDetailsRepository? details;
   bool onlineOnly = false;
   final AudioPlayer player = AudioPlayer();
   final ValueNotifier<String?> error = ValueNotifier(null);
@@ -72,14 +75,66 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
 
   MediaItem _item(DriveEntry entry) => MediaItem(
     id: entry.id,
-    title: entry.title,
-    artist: entry.demo ? '云间 · 原创合成试听' : entry.artist,
+    title: details?.cached(entry).title ?? entry.title,
+    artist:
+        details?.cached(entry).artist ??
+        (entry.demo ? '云间 · 原创合成试听' : entry.artist),
+    artUri: details?.cached(entry).coverPath == null
+        ? null
+        : Uri.file(details!.cached(entry).coverPath!),
     album: entry.demo
         ? '离线演示'
         : entry.path
               .substring(0, entry.path.lastIndexOf('/'))
               .replaceAll('/', ' / '),
   );
+
+  void _detailsChanged() {
+    if (entries.isEmpty || index >= entries.length) return;
+    final previous = queue.value;
+    queue.add([
+      for (var i = 0; i < entries.length; i++)
+        _item(
+          entries[i],
+        ).copyWith(duration: i < previous.length ? previous[i].duration : null),
+    ]);
+    final current = mediaItem.value;
+    mediaItem.add(
+      queue.value[index].copyWith(
+        duration: current?.duration,
+        extras: current?.extras,
+      ),
+    );
+  }
+
+  void replaceEntry(DriveEntry old, DriveEntry replacement) {
+    entries = [
+      for (final entry in entries)
+        if (entry.id == old.id && entry.path == old.path)
+          replacement
+        else
+          entry,
+    ];
+    _detailsChanged();
+  }
+
+  Future<void> removeEntry(DriveEntry target) async {
+    final removed = entries.indexWhere(
+      (e) => e.id == target.id && e.path == target.path,
+    );
+    if (removed < 0) return;
+    if (entries.length == 1) {
+      await clear();
+      return;
+    }
+    final currentRemoved = removed == index;
+    if (currentRemoved) await stop();
+    entries = [...entries]..removeAt(removed);
+    if (removed < index || index >= entries.length) index--;
+    _detailsChanged();
+    if (currentRemoved) _resumePosition = Duration.zero;
+    _broadcast();
+  }
 
   Future<void> playEntries(
     List<DriveEntry> tracks,

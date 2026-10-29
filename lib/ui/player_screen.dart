@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import '../app_controller.dart';
 import '../main.dart';
 import 'home_screen.dart';
+import 'song_actions.dart';
+import 'song_details_screen.dart';
 
 class PlayerScreen extends StatelessWidget {
   const PlayerScreen({super.key, required this.controller});
@@ -74,6 +76,44 @@ class PlayerScreen extends StatelessWidget {
       ),
       centerTitle: true,
       actions: [
+        StreamBuilder<MediaItem?>(
+          stream: controller.audio.mediaItem,
+          builder: (context, snapshot) {
+            if (controller.audio.entries.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            final entry = controller.audio.entries[controller.audio.index];
+            return PopupMenuButton<String>(
+              tooltip: '当前歌曲操作',
+              onSelected: (value) async {
+                if (value == 'details') {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => SongDetailsScreen(
+                        controller: controller,
+                        entry: entry,
+                      ),
+                    ),
+                  );
+                }
+                if (value == 'move' && context.mounted) {
+                  await manageSong(context, controller, entry, deleting: false);
+                }
+                if (value == 'delete' && context.mounted) {
+                  await manageSong(context, controller, entry, deleting: true);
+                }
+              },
+              itemBuilder: (_) => [
+                if (controller.details != null)
+                  const PopupMenuItem(value: 'details', child: Text('歌词与封面')),
+                if (controller.canManage(entry)) ...[
+                  const PopupMenuItem(value: 'move', child: Text('移动到其他目录')),
+                  const PopupMenuItem(value: 'delete', child: Text('删除网盘文件')),
+                ],
+              ],
+            );
+          },
+        ),
         IconButton(
           tooltip: '播放队列',
           onPressed: () => _queue(context),
@@ -95,6 +135,7 @@ class PlayerScreen extends StatelessWidget {
                 child: LayoutBuilder(
                   builder: (_, constraints) => CoverTile(
                     seed: item.id.hashCode,
+                    imagePath: item.artUri?.toFilePath(),
                     size: constraints.maxWidth.clamp(180, 340),
                   ),
                 ),
@@ -306,6 +347,22 @@ class PlayerScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 26),
+              if (controller.details != null)
+                TextButton.icon(
+                  onPressed: () {
+                    final entry = audio.entries[audio.index];
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => SongDetailsScreen(
+                          controller: controller,
+                          entry: entry,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.lyrics_outlined),
+                  label: const Text('查看歌词与封面'),
+                ),
               ValueListenableBuilder(
                 valueListenable: audio.error,
                 builder: (_, error, _) => error == null

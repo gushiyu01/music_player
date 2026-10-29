@@ -15,6 +15,18 @@ class FakeMusicHandler extends BaseAudioHandler implements MusicHandler {
   Duration get currentPosition => Duration.zero;
   @override
   Future<void> clear() async => selected = [];
+  @override
+  Future<void> removeEntry(DriveEntry entry) async {
+    selected = selected.where((e) => e.id != entry.id).toList();
+  }
+
+  @override
+  void replaceEntry(DriveEntry old, DriveEntry replacement) {
+    selected = [
+      for (final entry in selected)
+        if (entry.id == old.id) replacement else entry,
+    ];
+  }
 
   @override
   void restore(List<DriveEntry> tracks, int current, Duration position) {

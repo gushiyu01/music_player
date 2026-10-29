@@ -9,6 +9,7 @@ import 'session_store.dart';
 import 'transfer_control.dart';
 
 part 'baidu_upload.dart';
+part 'baidu_file_actions.dart';
 
 class DriveException implements Exception {
   const DriveException(this.message, {this.code = '', this.status});
@@ -202,6 +203,7 @@ class BaiduClient {
     '20011' => '当前应用无权访问此目录，请检查百度应用权限',
     '31326' => '百度拒绝下载请求，请重试或检查下载权限',
     '31360' => '下载链接已过期，请重试播放',
+    '12' => '文件操作失败，请检查目标同名文件和目录权限，刷新后核实',
     _ => '百度网盘请求失败（错误码 $code）',
   };
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -11,6 +12,8 @@ import '../data/baidu_client.dart';
 import 'transfers_screen.dart';
 import 'connection_screen.dart';
 import 'player_screen.dart';
+import 'song_actions.dart';
+import 'song_details_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller});
@@ -176,6 +179,16 @@ class _HomeScreenState extends State<HomeScreen> {
         } catch (_) {
           _message('无法移除本地文件，请重试');
         }
+      case 'move':
+        await manageSong(context, app, entry, deleting: false);
+      case 'delete':
+        await manageSong(context, app, entry, deleting: true);
+      case 'details':
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SongDetailsScreen(controller: app, entry: entry),
+          ),
+        );
     }
   }
 
@@ -787,7 +800,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                       color: accentColor,
                                     ),
                                   )
-                                : CoverTile(seed: entry.id.hashCode, size: 48),
+                                : CoverTile(
+                                    seed: entry.id.hashCode,
+                                    size: 48,
+                                    imagePath: app.details
+                                        ?.cached(entry)
+                                        .coverPath,
+                                  ),
                             title: Text(
                               entry.isDirectory ? entry.name : entry.title,
                               maxLines: 1,
@@ -832,13 +851,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                           size: 20,
                                         ),
                                       ),
-                                      if (app.transfers != null)
+                                      if (app.transfers != null ||
+                                          app.details != null ||
+                                          app.canManage(entry))
                                         PopupMenuButton<String>(
                                           tooltip: '歌曲操作',
                                           onSelected: (action) =>
                                               _trackAction(entry, action),
                                           itemBuilder: (_) => [
-                                            if (!downloaded)
+                                            if (!downloaded &&
+                                                app.transfers != null)
                                               const PopupMenuItem(
                                                 value: 'download',
                                                 child: Text('下载到本地'),
@@ -853,6 +875,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 value: 'remove',
                                                 child: Text('移除本地下载'),
                                               ),
+                                            if (app.details != null)
+                                              const PopupMenuItem(
+                                                value: 'details',
+                                                child: Text('歌词与封面'),
+                                              ),
+                                            if (app.canManage(entry)) ...[
+                                              const PopupMenuItem(
+                                                value: 'move',
+                                                child: Text('移动到其他目录'),
+                                              ),
+                                              const PopupMenuItem(
+                                                value: 'delete',
+                                                child: Text('删除网盘文件'),
+                                              ),
+                                            ],
                                           ],
                                         ),
                                     ],
@@ -953,9 +990,15 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class CoverTile extends StatelessWidget {
-  const CoverTile({super.key, required this.seed, this.size = 56});
+  const CoverTile({
+    super.key,
+    required this.seed,
+    this.size = 56,
+    this.imagePath,
+  });
   final int seed;
   final double size;
+  final String? imagePath;
   @override
   Widget build(BuildContext context) {
     final colors = [
@@ -972,33 +1015,40 @@ class CoverTile extends StatelessWidget {
         color: colors[seed.abs() % colors.length],
         borderRadius: BorderRadius.circular(size * .23),
       ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned(
-            right: -size * .25,
-            bottom: -size * .2,
-            child: Container(
-              width: size * 1.1,
-              height: size * 1.1,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: .12),
-                  width: size * .08,
-                ),
-              ),
+      child: imagePath == null
+          ? _placeholder()
+          : Image.file(
+              File(imagePath!),
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              cacheWidth: (size * 2).round(),
+              errorBuilder: (_, _, _) => _placeholder(),
             ),
-          ),
-          Icon(
-            Icons.graphic_eq,
-            color: const Color(0xFFE4EDD9),
-            size: size * .4,
-          ),
-        ],
-      ),
     );
   }
+
+  Widget _placeholder() => Stack(
+    alignment: Alignment.center,
+    children: [
+      Positioned(
+        right: -size * .25,
+        bottom: -size * .2,
+        child: Container(
+          width: size * 1.1,
+          height: size * 1.1,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white.withValues(alpha: .12),
+              width: size * .08,
+            ),
+          ),
+        ),
+      ),
+      Icon(Icons.graphic_eq, color: const Color(0xFFE4EDD9), size: size * .4),
+    ],
+  );
 }
 
 class _MiniPlayer extends StatelessWidget {
@@ -1019,7 +1069,11 @@ class _MiniPlayer extends StatelessWidget {
         ),
         child: ListTile(
           onTap: open,
-          leading: CoverTile(seed: item.id.hashCode, size: 42),
+          leading: CoverTile(
+            seed: item.id.hashCode,
+            size: 42,
+            imagePath: item.artUri?.toFilePath(),
+          ),
           title: Text(
             item.title,
             maxLines: 1,

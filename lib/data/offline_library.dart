@@ -112,6 +112,27 @@ class OfflineLibrary extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> relocate(DriveEntry entry, DriveEntry replacement) async {
+    final record = _records[key(entry)];
+    if (record == null || localPath(entry) == null) return;
+    final old = fileFor(entry);
+    final target = fileFor(replacement);
+    // Copy first so a failed manifest write leaves the original usable.
+    await old.copy(target.path);
+    _records[key(replacement)] = OfflineRecord(replacement, record.bytes);
+    _records.remove(key(entry));
+    try {
+      await _persist();
+    } catch (_) {
+      _records.remove(key(replacement));
+      _records[key(entry)] = record;
+      await target.delete();
+      rethrow;
+    }
+    await old.delete();
+    notifyListeners();
+  }
+
   Future<void> _persist() async {
     final ok = await prefs.setString(
       manifestKey,

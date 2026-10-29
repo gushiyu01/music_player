@@ -42,6 +42,19 @@ class TransferManager extends ChangeNotifier {
   final AssetBundle assets;
   final List<MusicTransfer> tasks = [];
   bool Function(String directory)? canUploadTo;
+  final Set<String> _retired = {};
+  String _entryKey(DriveEntry entry) => '${entry.id}:${entry.path}';
+
+  void retire(DriveEntry entry) {
+    _retired.add(_entryKey(entry));
+    for (final task in tasks) {
+      if (task.entry != null && _entryKey(task.entry!) == _entryKey(entry)) {
+        cancel(task);
+      }
+    }
+  }
+
+  void allow(DriveEntry entry) => _retired.remove(_entryKey(entry));
   bool _draining = false;
   DateTime _lastProgress = DateTime(2000);
   int get activeCount => tasks.where((t) => t.active).length;
@@ -56,6 +69,7 @@ class TransferManager extends ChangeNotifier {
   }
 
   void download(DriveEntry entry) {
+    if (_retired.contains(_entryKey(entry))) return;
     if (!entry.isAudio || library.localPath(entry) != null) return;
     final previous = downloadTask(entry);
     if (previous?.active == true) return;
@@ -95,6 +109,12 @@ class TransferManager extends ChangeNotifier {
 
   void retry(MusicTransfer task) {
     if (task.active || task.status == TransferStatus.done) return;
+    if (task.entry != null && _retired.contains(_entryKey(task.entry!))) {
+      task.error = '网盘文件已移动或删除，请刷新音乐目录后重新下载';
+      task.status = TransferStatus.failed;
+      notifyListeners();
+      return;
+    }
     if (task.uploading && canUploadTo?.call(task.destination) == false) {
       task.status = TransferStatus.failed;
       task.error = '原上传目录不在当前音乐目录内，请在音乐库重新选择文件上传';

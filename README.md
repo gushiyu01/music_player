@@ -40,10 +40,12 @@
 - 按当前列表建立播放队列，上一首/下一首、随机、单曲循环、列表循环。
 - 音乐播放进度、迷你播放器和完整播放页。
 - 原生后台音频服务，通知/锁屏/耳机媒体控制与耳机断开暂停。
+- 时间歌词逐行高亮、点歌词跳转；读取同目录 LRC、常用 MP3 / FLAC 内嵌歌词与封面，支持手机导入及手动在线匹配，本机缓存后可离线查看。
+- 单首网盘歌曲移动到音乐目录内的其他文件夹，或确认后删除网盘音频；目标同名文件不覆盖，本地下载与网盘删除分开处理。
 - 本机收藏标记，重启后恢复上次队列与位置，用户点播放后继续。
 - 原创音频离线演示。
 
-当前版本不提供远程删除、全盘递归扫描、专辑/歌手标签索引或歌词。歌手/专辑按文件夹组织，不读取或修改音乐标签；收藏筛选也是当前已加载目录的筛选。
+歌手/分类仍按真实文件夹组织，不建立全盘标签索引，不修改音乐文件里的标签。收藏筛选作用于当前已加载目录。
 
 ## 按歌手听歌、下载和上传
 
@@ -70,6 +72,32 @@
 
 传输时请保持 App 运行。后台播放由原生音频服务支持；上传/下载暂不提供独立系统后台传输服务、跨进程断点续传。进程被结束后，完整下载仍保留，不完整文件会清理，可重新发起传输。
 
+## 歌词与封面
+
+在歌曲操作或完整播放页打开 **歌词与封面**。常用 MP3 ID3v2.3/2.4、FLAC 标签可提供歌名、歌手、专辑、歌词与封面；也可以在歌曲所在目录放置文件：
+
+```text
+/音乐/周杰伦/
+  晴天.mp3
+  晴天.lrc
+  晴天.jpg
+  cover.jpg
+```
+
+同名 `.lrc` 优先于内嵌歌词；封面优先使用内嵌图片，再寻找同名图片以及 `cover`、`folder`、`front` 的 JPG / JPEG / PNG / WebP。只检查歌曲当前父目录，最多 10 页、2000 项，不递归读取其他目录。音乐头部最多读取 2 MB，歌词最多 256 KB，图片最多 5 MB；大标签或其他音频格式可改用同目录文件或手机导入。
+
+支持 UTF-8、UTF-16 与常见 GBK 歌词。LRC 显示当前行，点击一行可跳转；普通文本按全文展示。**导入歌词 / 导入封面** 从系统文件选择器读取，仅保存到本机，不上传、不修改网盘原文件。已缓存资料可在重启与断网后查看；卸载或清除数据会移除缓存。
+
+**搜索歌词 / 搜索封面** 仅在手动搜索时把输入的歌名和歌手发送给 LRCLIB、MusicBrainz / Cover Art Archive，不发送百度凭据或音频。结果需要选择对应版本；中文歌曲命中率、版本与网络可用性不保证，找不到时可导入自己的文件。手机导入或已选在线资料优先保留；“重新读取网盘资料”不会覆盖这些选择。原创试听曲为器乐，附带的是时间轴说明，并非演唱歌词。
+
+## 移动和删除歌曲
+
+歌曲操作里的 **移动到其他目录** 从指定音乐目录开始逐层选择目标，确认后只移动这一首音频，不覆盖同名文件；成功后更新播放队列、本地下载目录和资料缓存。网盘旁边的 `.lrc` 或图片文件不会自动跟随移动，需要时在网盘中自行整理。
+
+**删除网盘文件** 会再次显示歌名和完整路径，确认后删除该音频，保留手机已下载的副本以及同目录歌词和图片。删除后从当前网盘列表与播放队列移除；若需删除手机副本，另用 **移除本地下载**。本应用没有批量删除或目录删除功能。
+
+移动和删除调用百度同步接口并检查逐文件结果。网络中断或响应无法确认时不自动重试破坏性操作，请先刷新目录核实。真实读写权限需要使用自己的百度账号验证。
+
 ## 为什么播放器里有 localhost
 
 音频流由 Dart 直接向百度发送请求，用 `User-Agent: pan.baidu.com`、Range 和逐跳域名检查处理下载。`just_audio` 用**手机内部的 loopback HTTP 通道**把音频交给系统解码器。这不是远程代理服务器，音乐不流经本项目的任何服务器。远程下载只接受 HTTPS 百度域名，Android/iOS 只为本地回环通道开放明文访问。
@@ -89,7 +117,7 @@ flutter analyze
 flutter test
 ```
 
-CI 执行静态分析、自动测试、Android release APK 构建、Android 模拟器播放与后台控制检查、下载后结束进程并禁用网络的本地文件播放检查，以及 iOS release 无签名编译。设备截图和系统媒体会话日志保存在 `android-device-evidence` 产物。真实网盘授权及真实上传/下载性能需要在使用者设备和账号下联调，模拟 API 测试不代表已经完成真实账号验证。
+CI 执行静态分析、自动测试、Android release APK 构建、Android 模拟器播放与后台控制检查、下载后结束进程并禁用网络的本地文件播放与歌词缓存检查，以及 iOS release 无签名编译。设备截图和系统媒体会话日志保存在 `android-device-evidence` 产物。真实网盘授权、移动/删除以及真实上传/下载性能需要在使用者设备和账号下联调，模拟 API 测试不代表已经完成真实账号验证。
 
 已完成的验证及实测边界见 [验证记录](docs/validation.md)。
 
@@ -118,6 +146,10 @@ CI 执行静态分析、自动测试、Android release APK 构建、Android 模�
 - [百度网盘 SDK 的 token 交换接口](https://github.com/baidu-netdisk/baidu-drive-sdk-go/blob/main/baidudriver/api/auth_device_token.go)
 - [百度网盘 SDK 的预上传接口](https://github.com/baidu-netdisk/baidu-drive-sdk-go/blob/main/baidudriver/api/upload_precreate.go)
 - [百度网盘 SDK 的分片上传接口](https://github.com/baidu-netdisk/baidu-drive-sdk-go/blob/main/baidudriver/api/upload_slice.go)
+- [百度网盘 SDK 的移动/删除接口](https://github.com/baidu-netdisk/baidu-drive-sdk-go/blob/main/baidudriver/api/file_manager.go)
+- [LRCLIB 歌词接口](https://lrclib.net/docs)
+- [MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API)
+- [Cover Art Archive API](https://musicbrainz.org/doc/Cover_Art_Archive/API)
 - [百度 OAuth 接入文档](https://openauth.baidu.com/doc/doc.html)
 - [just_audio](https://pub.dev/packages/just_audio)
 - [audio_service 的 Android/iOS 配置](https://pub.dev/packages/audio_service)
