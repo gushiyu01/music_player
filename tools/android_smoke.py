@@ -54,6 +54,13 @@ def find_label(label, timeout=25):
 def tap_label(label):
     tap_node(find_label(label))
 
+def swipe_player(to_lyrics=True):
+    width, height = [int(v) for v in re.findall(r'(\d+)x(\d+)', adb('shell', 'wm', 'size'))[-1]]
+    start, end = (0.84, 0.16) if to_lyrics else (0.16, 0.84)
+    adb('shell', 'input', 'swipe', str(int(width * start)), str(int(height * .28)),
+        str(int(width * end)), str(int(height * .28)), '450')
+    time.sleep(1)
+
 def media_state(expected, name):
     sessions = adb('shell', 'dumpsys', 'media_session')
     (evidence / f'{name}-media-session.txt').write_text(sessions, encoding='utf-8')
@@ -96,13 +103,16 @@ try:
     screenshot('04-queue')
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
     time.sleep(1)
-    tap_label('当前歌曲操作')
-    tap_label('歌词与封面')
-    time.sleep(2)
+    swipe_player()
     find_label('此曲为器乐，没有演唱歌词')
     screenshot('07-lyrics-and-artwork')
+    tap_label('搜索歌词或封面')
+    find_label('搜索歌词')
+    find_label('搜索封面')
+    assert '导入歌词' not in ET.tostring(ui(), encoding='unicode')
+    screenshot('09-search-only-menu')
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-    time.sleep(1)
+    swipe_player(False)
     tap_label('下载当前歌曲')
     time.sleep(3)
     # A process restart proves this is a persistent file, rather than a live
@@ -127,9 +137,7 @@ try:
     tap_label('云间 · 原创合成试听')
     find_label('本地文件 · 离线播放')
     screenshot('06-offline-player')
-    tap_label('当前歌曲操作')
-    tap_label('歌词与封面')
-    time.sleep(1)
+    swipe_player()
     find_label('此曲为器乐，没有演唱歌词')
     screenshot('08-offline-lyrics-and-artwork')
     print('Release APK: playback, background/system controls, queue, persistent download, offline file playback and cached lyrics/artwork after process restart passed.')

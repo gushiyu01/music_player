@@ -181,11 +181,23 @@ void main() {
       expect(app.favorites, contains('demo:demo-dawn'));
       await tester.enterText(find.byType(TextField), 'Tide');
       await tester.pump();
-      expect(find.text('晨光 · Dawn'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(CustomScrollView),
+          matching: find.text('晨光 · Dawn'),
+        ),
+        findsNothing,
+      );
       expect(find.text('潮汐 · Tide'), findsOneWidget);
       await tester.tap(find.byTooltip('清除搜索'));
       await tester.pump();
-      expect(find.text('晨光 · Dawn'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(CustomScrollView),
+          matching: find.text('晨光 · Dawn'),
+        ),
+        findsOneWidget,
+      );
       app.dispose();
     },
   );

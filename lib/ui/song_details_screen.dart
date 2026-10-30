@@ -1,273 +1,11 @@
 import 'dart:async';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../app_controller.dart';
-import '../data/audio_tags.dart';
 import '../data/baidu_client.dart';
 import '../data/online_catalog.dart';
-import '../data/song_details_repository.dart';
 import '../main.dart';
-import '../models/drive_entry.dart';
 import '../models/song_details.dart';
-import 'home_screen.dart';
-
-class SongDetailsScreen extends StatefulWidget {
-  const SongDetailsScreen({
-    super.key,
-    required this.controller,
-    required this.entry,
-  });
-  final AppController controller;
-  final DriveEntry entry;
-  @override
-  State<SongDetailsScreen> createState() => _SongDetailsScreenState();
-}
-
-class _SongDetailsScreenState extends State<SongDetailsScreen> {
-  bool busy = false;
-  String? error;
-  AppController get app => widget.controller;
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_load());
-  }
-
-  Future<void> _run(Future<void> Function() work) async {
-    if (busy) return;
-    setState(() {
-      busy = true;
-      error = null;
-    });
-    try {
-      await work();
-    } catch (failure) {
-      if (mounted) {
-        setState(
-          () => error = failure is DriveException
-              ? failure.message
-              : failure is FormatException
-              ? failure.message
-              : '资料读取失败，请稍后重试或从手机导入',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
-  }
-
-  Future<void> _load({bool refresh = false}) => _run(() async {
-    await app.details?.load(widget.entry, refresh: refresh);
-  });
-
-  Future<void> _import(bool cover) => _run(() async {
-    final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: cover
-          ? ['jpg', 'jpeg', 'png', 'webp']
-          : ['lrc', 'txt'],
-    );
-    if (files.isEmpty) return;
-    final file = files.first;
-    final max = cover ? AudioTags.maxCover : AudioTags.maxLyrics;
-    if ((await file.length() ?? max + 1) > max) {
-      throw FormatException(cover ? '请选择不超过 5 MB 的图片' : '请选择不超过 256 KB 的歌词');
-    }
-    final bytes = await SongDetailsRepository.readLimited(
-      file.xFile.openRead(),
-      max,
-    );
-    if (cover) {
-      await app.details!.setCover(widget.entry, bytes, '手机导入');
-    } else {
-      await app.details!.setLyrics(
-        widget.entry,
-        AudioTags.decodeText(bytes),
-        '手机导入',
-      );
-    }
-  });
-
-  Future<void> _search(bool cover) async {
-    final catalog = app.catalog;
-    if (catalog == null) return;
-    final details = app.details!.cached(widget.entry);
-    final selected = await Navigator.of(context).push<CatalogResult>(
-      MaterialPageRoute(
-        builder: (_) => CatalogSearchScreen(
-          catalog: catalog,
-          cover: cover,
-          title: details.title ?? widget.entry.title,
-          artist: details.artist ?? widget.entry.artist,
-        ),
-      ),
-    );
-    if (selected == null || !mounted) return;
-    await _run(() async {
-      if (cover) {
-        await app.details!.setCover(
-          widget.entry,
-          await catalog.coverBytes(selected),
-          'Cover Art Archive · ${selected.artist} · ${selected.album}',
-        );
-      } else {
-        await app.details!.setLyrics(
-          widget.entry,
-          selected.lyrics!,
-          'LRCLIB · ${selected.artist} · ${selected.album}',
-        );
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('歌词与封面'),
-      actions: [
-        IconButton(
-          tooltip: '重新读取网盘资料',
-          onPressed: busy ? null : () => _load(refresh: true),
-          icon: const Icon(Icons.refresh),
-        ),
-      ],
-    ),
-    body: app.details == null
-        ? const Center(child: Text('资料缓存尚未初始化'))
-        : AnimatedBuilder(
-            animation: app.details!,
-            builder: (context, _) {
-              final details = app.details!.cached(widget.entry);
-              return Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                    child: Row(
-                      children: [
-                        CoverTile(
-                          seed: widget.entry.id.hashCode,
-                          size: 82,
-                          imagePath: details.coverPath,
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                details.title ?? widget.entry.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                details.artist ?? widget.entry.artist,
-                                style: const TextStyle(color: mutedColor),
-                              ),
-                              if (details.album?.isNotEmpty == true)
-                                Text(
-                                  details.album!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: mutedColor,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Wrap(
-                      spacing: 8,
-                      children: [
-                        ActionChip(
-                          label: const Text('导入歌词'),
-                          onPressed: busy ? null : () => _import(false),
-                        ),
-                        ActionChip(
-                          label: const Text('导入封面'),
-                          onPressed: busy ? null : () => _import(true),
-                        ),
-                        if (app.catalog != null) ...[
-                          ActionChip(
-                            label: const Text('搜索歌词'),
-                            onPressed: busy ? null : () => _search(false),
-                          ),
-                          ActionChip(
-                            label: const Text('搜索封面'),
-                            onPressed: busy ? null : () => _search(true),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  if (busy) const LinearProgressIndicator(),
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        error!,
-                        style: const TextStyle(color: Color(0xFFFFCF9C)),
-                      ),
-                    ),
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(
-                      [
-                        if (details.lyricsSource != null)
-                          '歌词：${details.lyricsSource}',
-                        if (details.coverSource != null)
-                          '封面：${details.coverSource}',
-                        if (details.lyricsSource == null &&
-                            details.coverSource == null)
-                          '读取同目录文件和常用 MP3 / FLAC 内嵌标签，可导入或手动匹配。',
-                      ].join('\n'),
-                      style: const TextStyle(fontSize: 11, color: mutedColor),
-                      maxLines: 4,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  Expanded(
-                    child: LyricsPanel(
-                      text: details.lyrics ?? '',
-                      position: Stream<Duration>.periodic(
-                        const Duration(milliseconds: 400),
-                        (_) => _isCurrent
-                            ? app.audio.currentPosition
-                            : Duration.zero,
-                      ),
-                      onSeek: (position) async {
-                        if (_isCurrent) {
-                          await app.audio.seek(position);
-                        } else {
-                          await app.audio.playEntries([widget.entry], 0);
-                          await app.audio.seek(position);
-                        }
-                      },
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-  );
-
-  bool get _isCurrent =>
-      app.audio.entries.isNotEmpty &&
-      app.audio.index < app.audio.entries.length &&
-      app.audio.entries[app.audio.index].id == widget.entry.id;
-}
 
 class LyricsPanel extends StatefulWidget {
   const LyricsPanel({
@@ -309,7 +47,7 @@ class _LyricsPanelState extends State<LyricsPanel> {
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
-            '暂无歌词\n可添加同名 .lrc、从手机导入，或搜索并选择对应版本。',
+            '暂无歌词\n可在左上角搜索歌词，或读取歌曲同目录的 .lrc。',
             textAlign: TextAlign.center,
             style: TextStyle(color: mutedColor, height: 1.8),
           ),
@@ -392,10 +130,12 @@ class CatalogSearchScreen extends StatefulWidget {
     required this.cover,
     required this.title,
     required this.artist,
+    required this.onApply,
   });
   final OnlineCatalog catalog;
   final bool cover;
   final String title, artist;
+  final Future<void> Function(CatalogResult) onApply;
   @override
   State<CatalogSearchScreen> createState() => _CatalogSearchScreenState();
 }
@@ -406,19 +146,28 @@ class _CatalogSearchScreenState extends State<CatalogSearchScreen> {
   List<CatalogResult>? results;
   bool busy = false;
   String? error;
+  String? applying;
+  DateTime? retryAt;
+  Timer? countdown;
+  int get remaining => retryAt == null
+      ? 0
+      : ((retryAt!.difference(DateTime.now()).inMilliseconds / 1000).ceil())
+            .clamp(0, 3600);
   @override
   void dispose() {
+    countdown?.cancel();
     title.dispose();
     artist.dispose();
     super.dispose();
   }
 
   Future<void> _search() async {
-    if (busy) return;
+    if (busy || applying != null || remaining > 0) return;
     FocusScope.of(context).unfocus();
     setState(() {
       busy = true;
       error = null;
+      results = null;
     });
     try {
       final items = widget.cover
@@ -427,20 +176,54 @@ class _CatalogSearchScreenState extends State<CatalogSearchScreen> {
       if (mounted) setState(() => results = items);
     } catch (failure) {
       if (mounted) {
-        setState(
-          () => error = failure is DriveException
-              ? failure.message
-              : '搜索失败，请修改歌名/歌手或稍后重试',
-        );
+        _failure(failure);
       }
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
+  void _failure(Object failure) {
+    setState(() {
+      error = failure is DriveException
+          ? failure.message
+          : failure is FormatException
+          ? failure.message
+          : '资料读取失败，请检查网络后重试';
+      if (failure is CatalogException && failure.retryAfter != null) {
+        retryAt = DateTime.now().add(failure.retryAfter!);
+        countdown?.cancel();
+        countdown = Timer.periodic(const Duration(seconds: 1), (timer) {
+          if (!mounted) {
+            timer.cancel();
+            return;
+          }
+          setState(() {});
+          if (remaining == 0) timer.cancel();
+        });
+      }
+    });
+  }
+
+  Future<void> _apply(CatalogResult result) async {
+    if (busy || applying != null || remaining > 0) return;
+    setState(() {
+      applying = result.id;
+      error = null;
+    });
+    try {
+      await widget.onApply(result);
+      if (mounted) Navigator.pop(context, true);
+    } catch (failure) {
+      if (mounted) _failure(failure);
+    } finally {
+      if (mounted) setState(() => applying = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.cover ? '匹配封面' : '匹配歌词')),
+    appBar: AppBar(title: Text(widget.cover ? '搜索封面' : '搜索歌词')),
     body: CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
@@ -470,26 +253,40 @@ class _CatalogSearchScreenState extends State<CatalogSearchScreen> {
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed: busy ? null : _search,
+                  onPressed: busy || applying != null || remaining > 0
+                      ? null
+                      : _search,
                   icon: const Icon(Icons.search),
-                  label: const Text('搜索候选'),
+                  label: Text(
+                    remaining > 0
+                        ? '$remaining 秒后重试'
+                        : busy
+                        ? '正在搜索…'
+                        : results == null && error != null
+                        ? '重新搜索'
+                        : '搜索候选',
+                  ),
                 ),
                 if (error != null)
-                  Text(
-                    error!,
-                    style: const TextStyle(color: Color(0xFFFFCF9C)),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      error!,
+                      style: const TextStyle(color: Color(0xFFFFCF9C)),
+                    ),
                   ),
               ],
             ),
           ),
         ),
-        if (busy) const SliverToBoxAdapter(child: LinearProgressIndicator()),
+        if (busy || applying != null)
+          const SliverToBoxAdapter(child: LinearProgressIndicator()),
         SliverList.list(
           children: [
             if (results?.isEmpty == true)
               const Padding(
                 padding: EdgeInsets.all(24),
-                child: Text('没有找到对应版本，可修改关键词或从手机导入。'),
+                child: Text('没有找到对应版本，请尝试仅填歌名，或换用简体/繁体关键词。'),
               ),
             for (final result in results ?? <CatalogResult>[])
               ListTile(
@@ -498,8 +295,15 @@ class _CatalogSearchScreenState extends State<CatalogSearchScreen> {
                   '${result.artist}\n${result.album}${result.duration == null ? '' : ' · ${result.duration! ~/ 60}:${(result.duration! % 60).toString().padLeft(2, '0')}'}',
                 ),
                 isThreeLine: true,
-                trailing: const Icon(Icons.check_circle_outline),
-                onTap: () => Navigator.pop(context, result),
+                trailing: applying == result.id
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check_circle_outline),
+                enabled: !busy && applying == null && remaining == 0,
+                onTap: () => _apply(result),
               ),
           ],
         ),

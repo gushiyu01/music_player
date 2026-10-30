@@ -13,7 +13,6 @@ import 'transfers_screen.dart';
 import 'connection_screen.dart';
 import 'player_screen.dart';
 import 'song_actions.dart';
-import 'song_details_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller});
@@ -184,9 +183,14 @@ class _HomeScreenState extends State<HomeScreen> {
       case 'delete':
         await manageSong(context, app, entry, deleting: true);
       case 'details':
+        final current = app.audio.entries;
+        if (current.isEmpty || current[app.audio.index].id != entry.id) {
+          await app.audio.playEntries([entry], 0);
+        }
+        if (!mounted) return;
         await Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => SongDetailsScreen(controller: app, entry: entry),
+            builder: (_) => PlayerScreen(controller: app, initialPage: 1),
           ),
         );
     }
@@ -1063,59 +1067,60 @@ class _MiniPlayer extends StatelessWidget {
       if (item == null) return const SizedBox.shrink();
       return Container(
         margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-        decoration: BoxDecoration(
+        child: Material(
           color: const Color(0xFF293428),
           borderRadius: BorderRadius.circular(18),
-        ),
-        child: ListTile(
-          onTap: open,
-          leading: CoverTile(
-            seed: item.id.hashCode,
-            size: 42,
-            imagePath: item.artUri?.toFilePath(),
-          ),
-          title: Text(
-            item.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-          subtitle: ValueListenableBuilder(
-            valueListenable: controller.audio.error,
-            builder: (_, error, _) => Text(
-              error == null ? item.artist ?? '百度网盘' : '播放中断 · 点击查看',
+          clipBehavior: Clip.antiAlias,
+          child: ListTile(
+            onTap: open,
+            leading: CoverTile(
+              seed: item.id.hashCode,
+              size: 42,
+              imagePath: item.artUri?.toFilePath(),
+            ),
+            title: Text(
+              item.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 10, color: mutedColor),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              StreamBuilder(
-                stream: controller.audio.playbackState,
-                builder: (_, snapshot) => IconButton(
-                  tooltip: snapshot.data?.playing == true ? '暂停' : '播放',
-                  onPressed: () {
-                    if (snapshot.data?.playing == true) {
-                      unawaited(controller.audio.pause());
-                    } else {
-                      unawaited(controller.audio.play());
-                    }
-                  },
-                  icon: Icon(
-                    snapshot.data?.playing == true
-                        ? Icons.pause
-                        : Icons.play_arrow,
+            subtitle: ValueListenableBuilder(
+              valueListenable: controller.audio.error,
+              builder: (_, error, _) => Text(
+                error == null ? item.artist ?? '百度网盘' : '播放中断 · 点击查看',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 10, color: mutedColor),
+              ),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                StreamBuilder(
+                  stream: controller.audio.playbackState,
+                  builder: (_, snapshot) => IconButton(
+                    tooltip: snapshot.data?.playing == true ? '暂停' : '播放',
+                    onPressed: () {
+                      if (snapshot.data?.playing == true) {
+                        unawaited(controller.audio.pause());
+                      } else {
+                        unawaited(controller.audio.play());
+                      }
+                    },
+                    icon: Icon(
+                      snapshot.data?.playing == true
+                          ? Icons.pause
+                          : Icons.play_arrow,
+                    ),
                   ),
                 ),
-              ),
-              IconButton(
-                tooltip: '下一首',
-                onPressed: controller.audio.skipToNext,
-                icon: const Icon(Icons.skip_next),
-              ),
-            ],
+                IconButton(
+                  tooltip: '下一首',
+                  onPressed: controller.audio.skipToNext,
+                  icon: const Icon(Icons.skip_next),
+                ),
+              ],
+            ),
           ),
         ),
       );
