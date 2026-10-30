@@ -12,10 +12,12 @@ class LyricsPanel extends StatefulWidget {
     super.key,
     required this.text,
     required this.position,
+    this.initialPosition = Duration.zero,
     this.onSeek,
   });
   final String text;
   final Stream<Duration> position;
+  final Duration initialPosition;
   final void Function(Duration)? onSeek;
   @override
   State<LyricsPanel> createState() => _LyricsPanelState();
@@ -66,7 +68,7 @@ class _LyricsPanelState extends State<LyricsPanel> {
     return LayoutBuilder(
       builder: (context, constraints) => StreamBuilder<Duration>(
         stream: widget.position,
-        initialData: Duration.zero,
+        initialData: widget.initialPosition,
         builder: (context, snapshot) {
           final active = lyrics.activeAt(snapshot.data ?? Duration.zero);
           if (current != active) {

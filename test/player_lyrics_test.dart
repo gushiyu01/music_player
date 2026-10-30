@@ -68,6 +68,7 @@ void main() {
       });
       final handler = FakeMusicHandler();
       await handler.playEntries([managedSong], 0);
+      handler.position = const Duration(seconds: 3);
       final app = AppController(
         client,
         handler,
@@ -82,6 +83,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 400));
+      final stationarySlider = tester.widget<Slider>(find.byType(Slider));
+      expect(stationarySlider.value, 3000);
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(
+        identical(stationarySlider, tester.widget<Slider>(find.byType(Slider))),
+        isTrue,
+        reason: 'An unchanged position must not rebuild the paused player',
+      );
       expect(find.text('原创第一行').hitTestable(), findsNothing);
       await tester.drag(
         find.byKey(const Key('player-pages')),
@@ -89,8 +99,11 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('原创第一行').hitTestable(), findsOneWidget);
-      await tester.tap(find.text('原创第二行'));
-      expect(handler.currentPosition, const Duration(seconds: 3));
+      expect(tester.widget<Text>(find.text('原创第二行')).style?.fontSize, 21);
+      await tester.tap(find.text('原创第一行'));
+      expect(handler.currentPosition, Duration.zero);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.widget<Slider>(find.byType(Slider)).value, 0);
       await tester.tap(find.byTooltip('搜索歌词或封面'));
       await tester.pumpAndSettle();
       expect(find.text('搜索歌词'), findsOneWidget);

@@ -30,11 +30,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late int page = widget.initialPage;
   final positions = StreamController<Duration>.broadcast();
   late final Timer positionTimer;
+  Duration? lastPosition;
   @override
   void initState() {
     super.initState();
     positionTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
-      positions.add(controller.audio.currentPosition);
+      final position = controller.audio.currentPosition;
+      if (position == lastPosition) return;
+      lastPosition = position;
+      positions.add(position);
     });
   }
 
@@ -245,6 +249,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           key: ValueKey('lyrics:${entry?.id}:${entry?.path}'),
                           text: details.lyrics ?? '',
                           position: positions.stream,
+                          initialPosition: audio.currentPosition,
                           onSeek: (position) => unawaited(audio.seek(position)),
                         ),
                       ],
@@ -342,7 +347,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   const SizedBox(height: 8),
                   StreamBuilder<Duration>(
                     stream: positions.stream,
-                    initialData: Duration.zero,
+                    initialData: audio.currentPosition,
                     builder: (context, snapshot) {
                       final duration = item.duration ?? Duration.zero;
                       final position = snapshot.data ?? Duration.zero;
