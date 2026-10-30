@@ -6,7 +6,15 @@
 
 已渲染并检查 393×852 的播放页封面、歌词和搜索菜单，歌词页保留进度与播放控制。真实公开接口小样本检查中，通过本机配置网络的 Python 请求取得歌词和音乐资料；Flutter 客户端两次探测都取得 29 个封面候选，歌词一次超时、一次返回 20 个结果；两次所选封面图片请求均超时。这说明实际网络可达性仍是限制，不能把请求重试等同于服务可用性保证。没有连接真实百度账号。
 
-GitHub Actions 构建与实际 APK 设备检查完成后补录源码、版本号、Run ID 与发布结果。
+最终源码：`503d52d763aeef6ea389ad7d110fc87fe57313f7`。Android versionCode：13。
+
+完整构建：[GitHub Actions 40992045446](https://github.com/gushiyu01/music_player/actions/runs/40992045446)。四项任务全部成功：分析与 84 项测试、固定个人签名的 Android release APK、Android 15 模拟器检查、iOS release 无签名编译。
+
+设备检查完成了播放、后台与系统暂停/恢复、队列、左右滑动封面与歌词、左上角仅两项搜索，以及下载后结束进程、关闭网络并从本地文件重新播放。已人工核对实际 APK 的封面、歌词高亮、搜索菜单、重启断网后的封面与歌词截图。九张截图、媒体会话与 logcat 在该次构建的 `android-device-evidence` 产物中；日志未发现 App 未处理异常。
+
+首次设备检查发现暂停后重复发送相同进度，使 UIAutomator 无法取得空闲界面；现已只在进度变化时刷新，同时让首次打开的歌词页使用当前播放位置。定向测试覆盖暂停后不重建进度条、初始高亮与点击歌词跳转，修复后完整设备检查通过。
+
+[v0.4.0 发布](https://github.com/gushiyu01/music_player/releases/tag/v0.4.0)由[发布任务 40993347635](https://github.com/gushiyu01/music_player/actions/runs/40993347635)从上述成功构建取得同一个 APK，经 SHA256 与签名检查后生成。APK 大小为 60,808,558 字节，SHA256 为 `3339a9cd9ed89e37f2ee21281dbbbed93cdd699984914e0eaf754e41414bec2f`，发布标签指向上述源码。
 
 ## v0.3.0 歌词、封面与单曲管理
 
