@@ -13,12 +13,19 @@ import '../models/song_details.dart';
 import 'audio_tags.dart';
 import 'baidu_client.dart';
 import 'offline_library.dart';
+import 'playback_cache.dart';
 
 class SongDetailsRepository extends ChangeNotifier {
-  SongDetailsRepository(this.directory, this.client, {this.library});
+  SongDetailsRepository(
+    this.directory,
+    this.client, {
+    this.library,
+    this.cache,
+  });
   final Directory directory;
   final BaiduClient client;
   final OfflineLibrary? library;
+  final PlaybackCache? cache;
   final Map<String, SongDetails> _cache = {};
   final Map<String, Future<SongDetails>> _pending = {};
   bool Function(String)? canRead;
@@ -86,7 +93,7 @@ class SongDetailsRepository extends ChangeNotifier {
       await _save(entry, result);
       return result;
     }
-    final local = library?.localPath(entry);
+    final local = library?.localPath(entry) ?? cache?.localPath(entry);
     try {
       Uint8List header;
       if (local != null) {

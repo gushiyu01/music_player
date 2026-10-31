@@ -11,6 +11,7 @@ import 'data/offline_library.dart';
 import 'data/transfer_manager.dart';
 import 'data/song_details_repository.dart';
 import 'data/online_catalog.dart';
+import 'data/playback_cache.dart';
 import 'playback/music_handler.dart';
 import 'ui/home_screen.dart';
 
@@ -26,15 +27,26 @@ Future<void> main() async {
       prefs,
     );
     await library.initialize();
-    final transfers = TransferManager(client, library);
+    final cache = PlaybackCache(
+      Directory('${support.path}/playback_cache'),
+      prefs,
+    );
+    await cache.initialize();
+    final transfers = TransferManager(client, library, cache: cache);
     final details = SongDetailsRepository(
       Directory('${support.path}/song_details'),
       client,
       library: library,
+      cache: cache,
     );
     await details.initialize();
     final handler = await AudioService.init<MusicHandler>(
-      builder: () => MusicHandler(client, library: library, details: details),
+      builder: () => MusicHandler(
+        client,
+        library: library,
+        details: details,
+        cache: cache,
+      ),
       config: const AudioServiceConfig(
         androidNotificationChannelId:
             'io.github.gushiyu01.music_player.playback',
@@ -50,6 +62,7 @@ Future<void> main() async {
       handler,
       prefs,
       library: library,
+      cache: cache,
       transfers: transfers,
       details: details,
       catalog: OnlineCatalog(),

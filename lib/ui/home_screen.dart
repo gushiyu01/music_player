@@ -13,6 +13,7 @@ import 'transfers_screen.dart';
 import 'connection_screen.dart';
 import 'player_screen.dart';
 import 'song_actions.dart';
+import 'cache_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller});
@@ -309,6 +310,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Icon(Icons.swap_vert),
                 ),
               ),
+            if (app.cache != null)
+              IconButton(
+                tooltip: '歌曲缓存',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => CacheScreen(controller: app),
+                  ),
+                ),
+                icon: const Icon(Icons.storage_outlined),
+              ),
             IconButton(
               tooltip: '连接设置',
               onPressed: _connect,
@@ -350,7 +361,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 const SizedBox(width: 8),
                                 Text(
                                   app.local
-                                      ? '本地下载 · 断网也能听'
+                                      ? '本地音乐 · 下载与缓存'
                                       : app.demo
                                       ? '离线试听 · 随时开始'
                                       : '百度网盘直连 · 仅在本机',
@@ -386,7 +397,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               decoration: InputDecoration(
                                 hintText: app.local
                                     ? app.localDirectory == null
-                                          ? '搜索已下载的目录'
+                                          ? '搜索本地音乐目录'
                                           : '搜索当前目录的音乐'
                                     : '搜索当前目录的分类、歌手或音乐',
                                 prefixIcon: const Icon(
@@ -556,9 +567,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                         app.local
                                             ? app.localDirectory ==
                                                       'assets/audio'
-                                                  ? '本地下载 / 原创试听'
+                                                  ? '本地音乐 / 原创试听'
                                                   : (app.localDirectory ??
-                                                        '本地下载 / 按目录收藏')
+                                                        '本地音乐 / 按目录收藏')
                                             : app.demo
                                             ? 'DEMO / 原创试听'
                                             : rootSetup
@@ -701,7 +712,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     : app.query.isNotEmpty
                                     ? '当前已加载的列表中没有匹配音乐'
                                     : app.local
-                                    ? '还没有本地音乐，去音乐库下载几首吧'
+                                    ? '还没有本地音乐，听歌会自动缓存，也可手动下载'
                                     : '这个目录还没有可播放的音乐',
                                 style: const TextStyle(
                                   color: mutedColor,
@@ -782,6 +793,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         final entry = tracks[index];
                         final downloaded =
                             app.library?.localPath(entry) != null;
+                        final cached = app.cache?.localPath(entry) != null;
                         return Padding(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 14,
@@ -824,8 +836,16 @@ class _HomeScreenState extends State<HomeScreen> {
                               entry.isDirectory
                                   ? '文件夹'
                                   : entry.demo
-                                  ? '${downloaded ? '已下载 · ' : ''}原创合成试听 · WAV'
-                                  : '${downloaded ? '已下载 · ' : ''}${entry.extension.toUpperCase()} · ${_size(entry.size)}',
+                                  ? '${downloaded
+                                        ? '已下载 · '
+                                        : cached
+                                        ? '已缓存 · '
+                                        : ''}原创合成试听 · WAV'
+                                  : '${downloaded
+                                        ? '已下载 · '
+                                        : cached
+                                        ? '已缓存 · '
+                                        : ''}${entry.extension.toUpperCase()} · ${_size(entry.size)}',
                               style: const TextStyle(
                                 color: mutedColor,
                                 fontSize: 11,

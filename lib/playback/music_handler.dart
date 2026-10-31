@@ -8,12 +8,14 @@ import 'package:just_audio/just_audio.dart';
 
 import '../data/baidu_client.dart';
 import '../data/offline_library.dart';
+import '../data/playback_cache.dart';
 import '../data/song_details_repository.dart';
 import '../models/drive_entry.dart';
 import 'baidu_audio_source.dart';
+import 'caching_audio_source.dart';
 
 class MusicHandler extends BaseAudioHandler with SeekHandler {
-  MusicHandler(this.client, {this.library, this.details}) {
+  MusicHandler(this.client, {this.library, this.details, this.cache}) {
     details?.addListener(_detailsChanged);
     player.playbackEventStream.listen((_) => _broadcast());
     player.errorStream.listen((_) {
@@ -41,6 +43,9 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
 
   final BaiduClient client;
   final OfflineLibrary? library;
+  final PlaybackCache? cache;
+  CachingAudioSource? _cachingSource;
+  DriveEntry? _protectedEntry;
   final SongDetailsRepository? details;
   bool onlineOnly = false;
   final AudioPlayer player = AudioPlayer();
@@ -159,14 +164,30 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
     _broadcast();
     try {
       await player.stop();
+      await _releaseCache();
       if (generation != _loadGeneration) return;
       final entry = entries[current];
       final local = onlineOnly ? null : library?.localPath(entry);
+      final cached = onlineOnly ? null : cache?.localPath(entry);
+      if (cache != null && (cached != null || local == null)) {
+        cache!.protect(entry);
+        _protectedEntry = entry;
+        if (cached != null) {
+          try {
+            await cache!.touch(entry);
+          } catch (_) {
+            /* Playback remains available. */
+          }
+        }
+      }
+      if (generation != _loadGeneration) return;
       mediaItem.add(
         queue.value[index].copyWith(
           extras: {
             'source': local != null
                 ? 'local'
+                : cached != null
+                ? 'cache'
                 : entry.demo
                 ? 'demo'
                 : 'online',
@@ -175,6 +196,10 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
       );
       final source = local != null
           ? AudioSource.file(local)
+          : cached != null
+          ? AudioSource.file(cached)
+          : cache != null
+          ? (_cachingSource = CachingAudioSource(client, entry, cache!))
           : entry.demo
           ? AudioSource.asset(entry.path)
           : BaiduAudioSource(client, entry);
@@ -192,6 +217,15 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
         _broadcast();
       }
     }
+  }
+
+  Future<void> _releaseCache() async {
+    final source = _cachingSource;
+    final protected = _protectedEntry;
+    _cachingSource = null;
+    _protectedEntry = null;
+    await source?.close();
+    if (protected != null) cache?.release(protected);
   }
 
   Future<void> _startPlayer() async {
@@ -321,6 +355,7 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
     _loadGeneration++;
     _resumePosition = player.position;
     await player.stop();
+    await _releaseCache();
     _loaded = false;
     loading.value = false;
     error.value = null;

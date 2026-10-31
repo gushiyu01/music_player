@@ -72,7 +72,7 @@ void main() {
       expect(prefs.getString('music_root'), '/音乐');
       await tester.tap(find.text('本地'));
       await tester.pumpAndSettle();
-      expect(find.text('本地下载 / 按目录收藏'), findsOneWidget);
+      expect(find.text('本地音乐 / 按目录收藏'), findsOneWidget);
       expect(find.text('上传到此目录'), findsNothing);
       app.dispose();
     },

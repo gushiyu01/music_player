@@ -9,6 +9,7 @@ import 'data/offline_library.dart';
 import 'data/transfer_manager.dart';
 import 'data/song_details_repository.dart';
 import 'data/online_catalog.dart';
+import 'data/playback_cache.dart';
 import 'models/drive_entry.dart';
 import 'models/music_directory.dart';
 import 'playback/music_handler.dart';
@@ -22,11 +23,13 @@ class AppController extends ChangeNotifier {
     this.transfers,
     this.details,
     this.catalog,
+    this.cache,
   }) {
     _timer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(savePlayback());
     });
     library?.addListener(_localChanged);
+    cache?.addListener(_localChanged);
     transfers?.addListener(_transferChanged);
     transfers?.canUploadTo = containsDirectory;
     details?.canRead = (path) =>
@@ -55,6 +58,7 @@ class AppController extends ChangeNotifier {
   final TransferManager? transfers;
   final SongDetailsRepository? details;
   final OnlineCatalog? catalog;
+  final PlaybackCache? cache;
   StreamSubscription<dynamic>? _mediaSubscription;
   String? _detailsEntry;
   final Set<String> mutating = {};
@@ -97,7 +101,12 @@ class AppController extends ChangeNotifier {
   List<DriveEntry> get songs => visible.where((e) => e.isAudio).toList();
 
   List<DriveEntry> get _localEntries {
-    final saved = library?.entries ?? <DriveEntry>[];
+    final saved = {
+      for (final entry in cache?.entries ?? <DriveEntry>[])
+        '${entry.demo}:${entry.id}:${entry.path}': entry,
+      for (final entry in library?.entries ?? <DriveEntry>[])
+        '${entry.demo}:${entry.id}:${entry.path}': entry,
+    }.values;
     if (localDirectory != null) {
       return saved.where((e) => e.parent == localDirectory).toList();
     }
@@ -253,6 +262,7 @@ class AppController extends ChangeNotifier {
       entries = entries.where((e) => e.path != entry.path).toList();
       if (destination == null) {
         if (queued) await audio.removeEntry(entry);
+        await cache?.remove(entry);
       } else {
         final replacement = DriveEntry(
           id: entry.id,
@@ -263,6 +273,7 @@ class AppController extends ChangeNotifier {
         _removedPaths.remove(replacement.path);
         try {
           await library?.relocate(entry, replacement);
+          await cache?.relocate(entry, replacement);
           await details?.move(entry, replacement);
         } catch (_) {
           operationNotice = '网盘移动成功，本地副本或资料目录更新失败；原本地下载仍可保留，请刷新检查';
@@ -317,7 +328,8 @@ class AppController extends ChangeNotifier {
             (e) =>
                 e.demo ||
                 containsDirectory(e.path) ||
-                library?.localPath(e) != null,
+                library?.localPath(e) != null ||
+                cache?.localPath(e) != null,
           )
           .toList();
       audio.restore(
@@ -435,6 +447,7 @@ class AppController extends ChangeNotifier {
     details?.invalidatePending();
     transfers?.cancelAll();
     await audio.clear();
+    await cache?.clear();
     await client.disconnect();
     await prefs.remove('playback');
     await prefs.remove('favorites');
@@ -445,10 +458,16 @@ class AppController extends ChangeNotifier {
     useDemo();
   }
 
+  Future<void> clearPlaybackCache() async {
+    await audio.stop();
+    await cache?.clear();
+  }
+
   @override
   void dispose() {
     _timer.cancel();
     library?.removeListener(_localChanged);
+    cache?.removeListener(_localChanged);
     transfers?.removeListener(_transferChanged);
     transfers?.canUploadTo = null;
     details?.removeListener(_localChanged);

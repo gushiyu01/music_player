@@ -14,14 +14,25 @@ class OfflineRecord {
 }
 
 class OfflineLibrary extends ChangeNotifier {
-  OfflineLibrary(this.directory, this.prefs);
+  OfflineLibrary(
+    this.directory,
+    this.prefs, {
+    this.manifest = manifestKey,
+    this.includeSize = false,
+  });
   final Directory directory;
   final SharedPreferences prefs;
+  final String manifest;
+  final bool includeSize;
   final Map<String, OfflineRecord> _records = {};
   static const manifestKey = 'offline_music_v1';
 
   String key(DriveEntry entry) => sha256
-      .convert(utf8.encode('${entry.demo}:${entry.id}:${entry.path}'))
+      .convert(
+        utf8.encode(
+          '${entry.demo}:${entry.id}:${entry.path}${includeSize ? ':${entry.size}' : ''}',
+        ),
+      )
       .toString();
   File fileFor(DriveEntry entry) => File.fromUri(
     directory.uri.resolve(
@@ -49,7 +60,7 @@ class OfflineLibrary extends ChangeNotifier {
     _records.clear();
     await directory.create(recursive: true);
     try {
-      final raw = jsonDecode(prefs.getString(manifestKey) ?? '[]') as List;
+      final raw = jsonDecode(prefs.getString(manifest) ?? '[]') as List;
       for (final value in raw) {
         try {
           final entry = DriveEntry.fromJson(
@@ -70,10 +81,10 @@ class OfflineLibrary extends ChangeNotifier {
     }
     // This directory belongs exclusively to the app's offline library.
     final keep = _records.values
-        .map((r) => fileFor(r.entry).absolute.path)
+        .map((r) => fileFor(r.entry).absolute.uri)
         .toSet();
     await for (final entity in directory.list(followLinks: false)) {
-      if (entity is File && !keep.contains(entity.absolute.path)) {
+      if (entity is File && !keep.contains(entity.absolute.uri)) {
         await entity.delete();
       }
     }
@@ -87,6 +98,16 @@ class OfflineLibrary extends ChangeNotifier {
       throw const FileSystemException('Incomplete offline file');
     }
     await partial.rename(fileFor(entry).path);
+    await commitExisting(entry, bytes);
+  }
+
+  // Used by the progressive cache: readers keep a stable path while the
+  // manifest becomes visible only after the complete file has been checked.
+  Future<void> commitExisting(DriveEntry entry, int bytes) async {
+    final file = fileFor(entry);
+    if (bytes <= 0 || !await file.exists() || await file.length() != bytes) {
+      throw const FileSystemException('Incomplete local file');
+    }
     _records[key(entry)] = OfflineRecord(entry, bytes);
     try {
       await _persist();
@@ -96,6 +117,13 @@ class OfflineLibrary extends ChangeNotifier {
       rethrow;
     }
     notifyListeners();
+  }
+
+  Future<void> touch(DriveEntry entry) async {
+    final record = _records.remove(key(entry));
+    if (record == null) return;
+    _records[key(entry)] = record;
+    await _persist();
   }
 
   Future<void> remove(DriveEntry entry) async {
@@ -135,7 +163,7 @@ class OfflineLibrary extends ChangeNotifier {
 
   Future<void> _persist() async {
     final ok = await prefs.setString(
-      manifestKey,
+      manifest,
       jsonEncode([
         for (final record in _records.values)
           {'entry': record.entry.toJson(), 'bytes': record.bytes},

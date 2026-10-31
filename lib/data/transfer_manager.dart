@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../models/drive_entry.dart';
 import 'baidu_client.dart';
 import 'offline_library.dart';
+import 'playback_cache.dart';
 import 'transfer_control.dart';
 
 enum TransferStatus { queued, running, done, failed, cancelled }
@@ -35,10 +36,11 @@ class MusicTransfer {
 }
 
 class TransferManager extends ChangeNotifier {
-  TransferManager(this.client, this.library, {AssetBundle? assets})
+  TransferManager(this.client, this.library, {AssetBundle? assets, this.cache})
     : assets = assets ?? rootBundle;
   final BaiduClient client;
   final OfflineLibrary library;
+  final PlaybackCache? cache;
   final AssetBundle assets;
   final List<MusicTransfer> tasks = [];
   bool Function(String directory)? canUploadTo;
@@ -189,6 +191,15 @@ class TransferManager extends ChangeNotifier {
     final entry = task.entry!;
     final control = task.control;
     control.check();
+    final pendingCache = cache?.pending(entry);
+    if (pendingCache != null) {
+      await Future.any([pendingCache, control.aborted]);
+      control.check();
+    }
+    if (await cache?.copyToDownload(entry, library) == true) {
+      task.bytes = library.fileFor(entry).lengthSync();
+      return;
+    }
     final partial = library.partialFor(entry);
     IOSink? sink;
     try {

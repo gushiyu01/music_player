@@ -298,7 +298,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   Row(
                     children: [
                       Icon(
-                        item.extras?['source'] == 'local'
+                        item.extras?['source'] == 'local' ||
+                                item.extras?['source'] == 'cache'
                             ? Icons.offline_pin_outlined
                             : Icons.cloud_outlined,
                         size: 16,
@@ -308,6 +309,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       Text(
                         item.extras?['source'] == 'local'
                             ? '本地文件 · 离线播放'
+                            : item.extras?['source'] == 'cache'
+                            ? '歌曲缓存 · 离线播放'
                             : item.extras?['source'] == 'demo'
                             ? '原创试听'
                             : '在线播放',

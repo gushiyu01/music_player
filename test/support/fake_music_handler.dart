@@ -13,6 +13,12 @@ class FakeMusicHandler extends BaseAudioHandler implements MusicHandler {
   @override
   final repeat = ValueNotifier(AudioServiceRepeatMode.none);
   Duration position = Duration.zero;
+  int stopCalls = 0;
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+  }
+
   List<DriveEntry> selected = [];
   @override
   List<DriveEntry> get entries => selected;
